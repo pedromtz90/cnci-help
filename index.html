@@ -169,11 +169,8 @@
             </div>
 
             <!-- Controles de Paginación (Estáticos por ahora) -->
-            <div id="pagination-controls" class="mt-16 flex justify-center gap-3">
-                <button class="w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm bg-cnciBlue text-white shadow-md hover:bg-blue-700 transition-colors">1</button>
-                <button class="w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm bg-white text-slate-500 border border-slate-200 hover:border-cnciBlue hover:text-cnciBlue transition-all shadow-sm">2</button>
-                <button class="w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm bg-white text-slate-500 border border-slate-200 hover:border-cnciBlue hover:text-cnciBlue transition-all shadow-sm">3</button>
-            </div>
+            <!-- Controles de Paginación Dinámicos -->
+            <div id="pagination-controls" class="mt-16 flex justify-center flex-wrap gap-3"></div>
             <!-- NUEVA SECCIÓN: Directorio CNCI -->
             <section class="mt-24 mb-10 w-full max-w-5xl mx-auto animate__animated animate__fadeIn">
                 <div class="bg-white rounded-[2rem] shadow-premium border border-slate-100 p-8 md:p-12 text-center overflow-hidden relative">
@@ -753,6 +750,8 @@
         let areasData = [];
         let currentCategory = 'all';
         let searchQuery = '';
+        let currentPage = 1;         // NUEVO: Página inicial
+        const faqsPerPage = 10;       // NUEVO: Cantidad de preguntas por página
         const customAppId = "cnci-faq-hub-v2";
         
         let metricsData = [];
@@ -981,12 +980,14 @@
         // Lógica de Renderizado y Búsqueda (Cliente)
         window.handleSearch = (e) => {
             searchQuery = e.target.value.toLowerCase();
+            currentPage = 1; // Regresar a página 1 al buscar
             renderFAQs();
         };
 
         window.setCategory = (id) => {
             currentCategory = id;
             window.openedFaqId = null; 
+            currentPage = 1; // Regresar a página 1 al cambiar categoría
             renderFAQs();
             renderCategories();
         };
@@ -1023,10 +1024,21 @@
             container.innerHTML = html;
         };
 
+        // Función para cambiar de página
+        window.goToPage = (page) => {
+            currentPage = page;
+            window.openedFaqId = null; // Cerrar FAQ abierta al cambiar de página
+            renderFAQs();
+            // Scroll suave hacia arriba
+            document.getElementById('view-client').scrollIntoView({ behavior: 'smooth' });
+        };
+
         const renderFAQs = () => {
             const container = document.getElementById('faqs-container');
+            const paginationContainer = document.getElementById('pagination-controls');
             if (!container) return;
 
+            // 1. Filtrar los datos primero
             let filtered = faqsData;
 
             if (currentCategory !== 'all') {
@@ -1040,6 +1052,7 @@
                 );
             }
 
+            // 2. Si no hay resultados
             if (filtered.length === 0) {
                 container.innerHTML = `
                     <div class="text-center py-12">
@@ -1047,10 +1060,19 @@
                         <p class="text-slate-500 font-medium">No encontramos resultados para tu búsqueda.</p>
                     </div>
                 `;
+                if(paginationContainer) paginationContainer.innerHTML = '';
                 return;
             }
 
-            container.innerHTML = filtered.map(faq => {
+            // 3. Lógica Matemática de Paginación
+            const totalPages = Math.ceil(filtered.length / faqsPerPage);
+            if (currentPage > totalPages) currentPage = Math.max(1, totalPages); // Prevención de errores
+            
+            const startIndex = (currentPage - 1) * faqsPerPage;
+            const paginatedFaqs = filtered.slice(startIndex, startIndex + faqsPerPage);
+
+            // 4. Dibujar solo las FAQs de esta página
+            container.innerHTML = paginatedFaqs.map(faq => {
                 const isOpen = window.openedFaqId === faq.id;
                 
                 let mediaHtml = '';
@@ -1071,7 +1093,6 @@
                         <h3 class="text-slate-800 font-black text-lg md:text-xl pr-6 group-hover:text-cnciBlue transition-colors">${faq.question || 'Sin título'}</h3>
                         <i class="fa-solid ${isOpen ? 'fa-chevron-up text-cnciBlue' : 'fa-chevron-down text-slate-400'} group-hover:text-cnciBlue text-xl transition-transform duration-300"></i>
                     </button>
-                    <!-- Aquí se inyecta la clase rte-output para que el formato enriquecido se vea genial -->
                     <div class="${isOpen ? 'block' : 'hidden'} px-6 md:px-8 pb-6 md:pb-8 animate__animated animate__fadeIn animate__faster">
                         <div class="text-slate-600 leading-relaxed mb-6 rte-output">${faq.answer || ''}</div>
                         ${mediaHtml}
@@ -1082,6 +1103,22 @@
                     </div>
                 </article>`;
             }).join('');
+
+            // 5. Dibujar los Botones de Paginación Dinámicos
+            if (paginationContainer) {
+                if (totalPages <= 1) {
+                    paginationContainer.innerHTML = ''; // Ocultar botones si todo cabe en 1 página
+                } else {
+                    let pagHtml = '';
+                    for (let i = 1; i <= totalPages; i++) {
+                        const isActive = i === currentPage;
+                        pagHtml += `
+                        <button onclick="window.goToPage(${i})" class="w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm transition-all shadow-sm ${isActive ? 'bg-cnciBlue text-white shadow-md hover:bg-blue-700' : 'bg-white text-slate-500 border border-slate-200 hover:border-cnciBlue hover:text-cnciBlue'}">${i}</button>
+                        `;
+                    }
+                    paginationContainer.innerHTML = pagHtml;
+                }
+            }
         };
 
         // Interacciones con la Base de Datos (Likes y Clics)
