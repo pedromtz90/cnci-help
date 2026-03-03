@@ -84,6 +84,17 @@
         .rte-output i, .rte-output em { font-style: italic; }
         .rte-output u { text-decoration: underline; }
         .rte-output strike, .rte-output s { text-decoration: line-through; }
+        /* Rescate de saltos de línea (Chrome usa divs, no p) */
+        .rte-output div { margin-bottom: 0.75rem; min-height: 1rem; }
+        
+        /* Rescate de tamaños de fuente (Tailwind borra el tag <font>) */
+        .rte-output font[size="1"] { font-size: 0.75rem; }
+        .rte-output font[size="2"] { font-size: 0.875rem; }
+        .rte-output font[size="3"] { font-size: 1rem; }
+        .rte-output font[size="4"] { font-size: 1.125rem; }
+        .rte-output font[size="5"] { font-size: 1.25rem; }
+        .rte-output font[size="6"] { font-size: 1.5rem; }
+        .rte-output font[size="7"] { font-size: 1.875rem; }
         /* Efectos Modernos para el Hero (Buscador) */
         .bg-grid-pattern {
             background-image: radial-gradient(rgba(255, 255, 255, 0.15) 1px, transparent 1px);
@@ -539,12 +550,30 @@
     <footer class="bg-white mt-auto border-t border-gray-200/60 py-8 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.02)] relative z-10">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col md:flex-row justify-between items-center gap-6">
             
-            <!-- 1. Copyright & Secret Login -->
-            <p class="text-sm text-gray-500 font-medium text-center md:text-left order-2 md:order-1 relative">
-                © 2026 Universidad Virtual CNCI
-                <!-- Este punto es el botón secreto de Login -->
-                <button id="footer-login-btn" onclick="window.showLoginModal()" class="cursor-default focus:outline-none" title="Staff Area">.</button>
-            </p>
+            <!-- 1. Copyright, Secret Login & Sync Button -->
+            <div class="text-center md:text-left order-2 md:order-1 relative flex flex-col sm:flex-row items-center gap-4 sm:gap-6">
+                
+                <!-- Este punto es el botón secreto de Login, posicionado absolutamente a la izquierda para alejarlo -->
+                <button id="footer-login-btn" onclick="window.showLoginModal()" class="absolute -left-6 sm:-left-10 text-gray-300 hover:text-cnciBlue cursor-default focus:outline-none transition-colors" title="Staff Area">.</button>
+
+                <p class="text-sm text-gray-500 font-medium">
+                    © 2026 Universidad Virtual CNCI
+                </p>
+                
+                <!-- Botón de Sincronización con Tooltip Explicativo -->
+                <div class="relative group flex items-center">
+                    <button onclick="window.forceCacheRefresh(event)" class="text-[11px] text-slate-500 hover:text-cnciBlue transition-colors flex items-center gap-1.5 font-bold bg-slate-50 hover:bg-blue-50 px-3 py-1.5 rounded-lg border border-slate-200 shadow-sm">
+                        <i class="fa-solid fa-arrows-rotate"></i> Actualizar información
+                    </button>
+                    
+                    <!-- Tooltip animado (Tailwind) -->
+                    <div class="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-max max-w-[220px] text-center px-3 py-2 bg-slate-800 text-white text-[10px] leading-relaxed rounded-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-300 shadow-xl z-50 pointer-events-none font-medium">
+                        Da clic aquí para descargar las preguntas y respuestas más recientes si no encuentras lo que buscas.
+                        <!-- Flecha del tooltip -->
+                        <div class="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-slate-800"></div>
+                    </div>
+                </div>
+            </div>
 
             <!-- 2. Redes Sociales CNCI -->
             <div class="flex items-center gap-4 order-1 md:order-2">
