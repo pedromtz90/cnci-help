@@ -84,6 +84,22 @@
         .rte-output i, .rte-output em { font-style: italic; }
         .rte-output u { text-decoration: underline; }
         .rte-output strike, .rte-output s { text-decoration: line-through; }
+        /* Efectos Modernos para el Hero (Buscador) */
+        .bg-grid-pattern {
+            background-image: radial-gradient(rgba(255, 255, 255, 0.15) 1px, transparent 1px);
+            background-size: 30px 30px;
+        }
+        @keyframes float {
+            0%, 100% { transform: translateY(0px) scale(1); }
+            50% { transform: translateY(-20px) scale(1.05); }
+        }
+        .animate-float {
+            animation: float 7s ease-in-out infinite;
+        }
+        .animate-float-delayed {
+            animation: float 9s ease-in-out infinite;
+            animation-delay: 2s;
+        }
     </style>
 </head>
 
@@ -143,14 +159,23 @@
     <!-- Vista Cliente -->
     <main id="view-client" class="flex-grow w-full flex flex-col">
         
-        <!-- Sección Hero (Buscador) -->
-        <section class="w-full bg-gradient-to-br from-[#004aad] to-[#002d69] pt-20 pb-32 px-6 text-center">
-            <div class="max-w-4xl mx-auto">
-                <h2 class="font-black text-4xl md:text-6xl text-white mb-10 tracking-tight leading-tight">¿En qué podemos orientarte hoy?</h2>
+        <!-- Sección Hero (Buscador con Animación CSS) -->
+        <section class="relative w-full bg-gradient-to-br from-[#004aad] via-[#00398a] to-[#002d69] pt-24 pb-36 px-6 text-center overflow-hidden">
+            <!-- Overlay de Patrón de Puntos (Textura) -->
+            <div class="absolute inset-0 bg-grid-pattern opacity-40"></div>
+            
+            <!-- Esferas Brillantes Flotantes (Luces de fondo) -->
+            <div class="absolute -top-20 -left-20 w-80 h-80 bg-blue-400/20 rounded-full blur-3xl animate-float pointer-events-none"></div>
+            <div class="absolute top-20 -right-10 w-96 h-96 bg-accent/15 rounded-full blur-3xl animate-float-delayed pointer-events-none"></div>
+            
+            <!-- Contenido Frontal -->
+            <div class="relative z-10 max-w-4xl mx-auto">
+                <h2 class="font-black text-4xl md:text-6xl text-white mb-4 tracking-tight leading-tight drop-shadow-md">¿En qué podemos orientarte hoy?</h2>
+                <p class="text-blue-100 mb-10 text-lg font-medium max-w-2xl mx-auto drop-shadow-sm hidden md:block">Encuentra respuestas rápidas sobre plataformas, constancias, titulación y servicios universitarios.</p>
                 
-                <div class="relative max-w-2xl mx-auto">
-                    <i class="fa-solid fa-magnifying-glass absolute left-6 top-1/2 transform -translate-y-1/2 text-slate-400 text-xl z-10"></i>
-                    <input type="text" oninput="window.handleSearch(event)" placeholder="Buscar Blackboard, titulación, constancias..." class="w-full pl-16 pr-6 py-5 rounded-2xl shadow-2xl text-slate-800 text-lg md:text-xl focus:outline-none focus:ring-4 focus:ring-accent/40 transition-all border-none placeholder-slate-400">
+                <div class="relative max-w-2xl mx-auto group">
+                    <i class="fa-solid fa-magnifying-glass absolute left-6 top-1/2 transform -translate-y-1/2 text-slate-400 text-xl z-10 transition-colors group-focus-within:text-cnciBlue"></i>
+                    <input type="text" oninput="window.handleSearch(event)" placeholder="Ej. ¿Cómo entro a Blackboard?..." class="w-full pl-16 pr-6 py-5 rounded-2xl shadow-2xl text-slate-800 text-lg md:text-xl focus:outline-none focus:ring-4 focus:ring-accent/50 transition-all border-none placeholder-slate-400 bg-white/95 backdrop-blur-sm">
                 </div>
             </div>
         </section>
