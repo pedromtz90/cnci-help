@@ -158,9 +158,21 @@
         <!-- Contenedor Principal y Categorías -->
         <div class="max-w-6xl mx-auto w-full px-4 -mt-16 relative z-10 pb-20">
             
-            <!-- Categorías Dinámicas (Tarjetas con scroll horizontal) -->
-            <div id="categories-container" class="flex overflow-x-auto gap-4 mb-12 pb-6 no-scrollbar snap-x snap-mandatory justify-start lg:justify-center items-center px-2">
-                <!-- Se llenará mediante JS -->
+            <!-- Categorías Dinámicas (con Flechas de Navegación) -->
+            <div class="relative w-full max-w-6xl mx-auto mb-12 group">
+                <!-- Flecha Izquierda -->
+                <button onclick="window.scrollCategories(-1)" class="absolute left-0 top-1/2 -translate-y-1/2 -ml-2 sm:-ml-5 z-20 w-10 h-10 sm:w-12 sm:h-12 bg-white rounded-full shadow-md text-slate-400 hover:text-cnciBlue hover:shadow-lg border border-slate-100 hidden md:flex items-center justify-center transition-all opacity-0 group-hover:opacity-100 hover:scale-110">
+                    <i class="fa-solid fa-chevron-left text-lg"></i>
+                </button>
+                
+                <div id="categories-container" class="flex overflow-x-auto gap-4 pb-6 no-scrollbar snap-x snap-mandatory justify-start items-center px-4 scroll-smooth">
+                    <!-- Se llenará mediante JS -->
+                </div>
+
+                <!-- Flecha Derecha -->
+                <button onclick="window.scrollCategories(1)" class="absolute right-0 top-1/2 -translate-y-1/2 -mr-2 sm:-mr-5 z-20 w-10 h-10 sm:w-12 sm:h-12 bg-white rounded-full shadow-md text-slate-400 hover:text-cnciBlue hover:shadow-lg border border-slate-100 hidden md:flex items-center justify-center transition-all opacity-0 group-hover:opacity-100 hover:scale-110">
+                    <i class="fa-solid fa-chevron-right text-lg"></i>
+                </button>
             </div>
 
             <!-- Tarjetas FAQ Dinámicas -->
@@ -1104,20 +1116,58 @@
                 </article>`;
             }).join('');
 
-            // 5. Dibujar los Botones de Paginación Dinámicos
+            // 5. Dibujar los Botones de Paginación Dinámicos (Inteligente)
             if (paginationContainer) {
                 if (totalPages <= 1) {
-                    paginationContainer.innerHTML = ''; // Ocultar botones si todo cabe en 1 página
+                    paginationContainer.innerHTML = ''; // Ocultar si solo hay 1 página
                 } else {
                     let pagHtml = '';
-                    for (let i = 1; i <= totalPages; i++) {
-                        const isActive = i === currentPage;
-                        pagHtml += `
-                        <button onclick="window.goToPage(${i})" class="w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm transition-all shadow-sm ${isActive ? 'bg-cnciBlue text-white shadow-md hover:bg-blue-700' : 'bg-white text-slate-500 border border-slate-200 hover:border-cnciBlue hover:text-cnciBlue'}">${i}</button>
-                        `;
+                    
+                    // Botón Anterior (<)
+                    const prevDisabled = currentPage === 1;
+                    pagHtml += `<button onclick="${prevDisabled ? '' : `window.goToPage(${currentPage - 1})`}" class="w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm transition-all shadow-sm bg-white border border-slate-200 ${prevDisabled ? 'text-slate-300 cursor-not-allowed' : 'text-slate-500 hover:border-cnciBlue hover:text-cnciBlue'}"><i class="fa-solid fa-chevron-left"></i></button>`;
+
+                    // Rango de páginas dinámico (Máximo 5 botones a la vez)
+                    let startPage = Math.max(1, currentPage - 2);
+                    let endPage = Math.min(totalPages, startPage + 4);
+                    
+                    if (endPage - startPage < 4) {
+                        startPage = Math.max(1, endPage - 4);
                     }
+
+                    // Botón de la primera página y puntos suspensivos
+                    if (startPage > 1) {
+                        pagHtml += `<button onclick="window.goToPage(1)" class="w-10 h-10 hidden sm:flex rounded-full items-center justify-center font-bold text-sm transition-all shadow-sm bg-white text-slate-500 border border-slate-200 hover:border-cnciBlue hover:text-cnciBlue">1</button>`;
+                        if (startPage > 2) pagHtml += `<span class="hidden sm:flex items-center text-slate-400 font-bold tracking-widest">...</span>`;
+                    }
+
+                    // Botones centrales
+                    for (let i = startPage; i <= endPage; i++) {
+                        const isActive = i === currentPage;
+                        pagHtml += `<button onclick="window.goToPage(${i})" class="w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm transition-all shadow-sm ${isActive ? 'bg-cnciBlue text-white shadow-md hover:bg-blue-700' : 'bg-white text-slate-500 border border-slate-200 hover:border-cnciBlue hover:text-cnciBlue'}">${i}</button>`;
+                    }
+
+                    // Botón de la última página y puntos suspensivos
+                    if (endPage < totalPages) {
+                        if (endPage < totalPages - 1) pagHtml += `<span class="hidden sm:flex items-center text-slate-400 font-bold tracking-widest">...</span>`;
+                        pagHtml += `<button onclick="window.goToPage(${totalPages})" class="w-10 h-10 hidden sm:flex rounded-full items-center justify-center font-bold text-sm transition-all shadow-sm bg-white text-slate-500 border border-slate-200 hover:border-cnciBlue hover:text-cnciBlue">${totalPages}</button>`;
+                    }
+
+                    // Botón Siguiente (>)
+                    const nextDisabled = currentPage === totalPages;
+                    pagHtml += `<button onclick="${nextDisabled ? '' : `window.goToPage(${currentPage + 1})`}" class="w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm transition-all shadow-sm bg-white border border-slate-200 ${nextDisabled ? 'text-slate-300 cursor-not-allowed' : 'text-slate-500 hover:border-cnciBlue hover:text-cnciBlue'}"><i class="fa-solid fa-chevron-right"></i></button>`;
+
                     paginationContainer.innerHTML = pagHtml;
                 }
+            }
+        };
+
+        // Lógica para deslizar el carrusel de Categorías
+        window.scrollCategories = (direction) => {
+            const container = document.getElementById('categories-container');
+            if (container) {
+                const scrollAmount = window.innerWidth < 640 ? 150 : 300; // Desliza más rápido en PC
+                container.scrollBy({ left: direction * scrollAmount, behavior: 'smooth' });
             }
         };
 
