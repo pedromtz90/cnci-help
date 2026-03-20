@@ -220,7 +220,7 @@ export function exactFaqMatch(query: string): ContentItem | null {
     }
   }
 
-  // Strategy 3: TF-IDF
+  // Strategy 3: TF-IDF (with minimum confidence threshold)
   if (!result) {
     const queryStems = stemTokens(tokenize(query));
     if (queryStems.length > 0) {
@@ -229,7 +229,9 @@ export function exactFaqMatch(query: string): ContentItem | null {
         .filter((s) => s.score > 0)
         .sort((a, b) => b.score - a.score);
 
-      if (scored.length > 0 && scored[0].score > 0) {
+      // Require minimum score AND significant gap vs second result
+      // A good match typically scores 15+ on a single title keyword match
+      if (scored.length > 0 && scored[0].score >= 5) {
         result = scored[0].doc.item;
       }
     }
