@@ -2,23 +2,10 @@ import Fuse from 'fuse.js';
 import type { ContentItem, ContentMeta, SearchResult } from '@/types/content';
 import { getAllDynamic, getIndexVersion } from './dynamic';
 
-let fuseInstance: Fuse<ContentItem> | null = null;
 let contentCache: ContentItem[] | null = null;
+let titleFuse: Fuse<ContentItem> | null = null;   // Fuse on titles only (for chat)
+let fullFuse: Fuse<ContentItem> | null = null;     // Fuse on all fields (for search page)
 let lastIndexVersion = -1;
-
-const FUSE_OPTIONS = {
-  keys: [
-    { name: 'title', weight: 0.45 },
-    { name: 'excerpt', weight: 0.25 },
-    { name: 'tags', weight: 0.20 },
-    { name: 'content', weight: 0.10 },
-  ],
-  threshold: 0.45,
-  ignoreLocation: true,
-  includeScore: true,
-  includeMatches: true,
-  minMatchCharLength: 2,
-};
 
 const STOPWORDS = new Set([
   'como', 'cómo', 'que', 'qué', 'cual', 'cuál', 'donde', 'dónde',
@@ -28,6 +15,8 @@ const STOPWORDS = new Set([
   'necesito', 'quiero', 'the', 'and', 'for', 'are', 'but', 'not',
   'ver', 'puede', 'hacer', 'saber', 'tener', 'dar', 'pedir',
 ]);
+
+const noAccent = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 
 let staticContent: ContentItem[] = [];
 
@@ -43,7 +32,31 @@ function rebuildIndex(): void {
   } catch {
     contentCache = [...staticContent];
   }
-  fuseInstance = new Fuse(contentCache, FUSE_OPTIONS);
+  // Title-focused index for chatbot (high precision)
+  titleFuse = new Fuse(contentCache, {
+    keys: [
+      { name: 'title', weight: 0.7 },
+      { name: 'tags', weight: 0.3 },
+    ],
+    threshold: 0.5,
+    ignoreLocation: true,
+    includeScore: true,
+    minMatchCharLength: 2,
+  });
+  // Full content index for search page (high recall)
+  fullFuse = new Fuse(contentCache, {
+    keys: [
+      { name: 'title', weight: 0.40 },
+      { name: 'excerpt', weight: 0.25 },
+      { name: 'tags', weight: 0.20 },
+      { name: 'content', weight: 0.15 },
+    ],
+    threshold: 0.5,
+    ignoreLocation: true,
+    includeScore: true,
+    includeMatches: true,
+    minMatchCharLength: 2,
+  });
   lastIndexVersion = getIndexVersion();
 }
 
@@ -55,10 +68,12 @@ function ensureFreshIndex(): void {
   } catch {}
 }
 
+// ── Public search (for search page) ─────────────────────────────────
+
 export function search(query: string, limit = 10): SearchResult[] {
   ensureFreshIndex();
-  if (!fuseInstance || !contentCache) return [];
-  const results = fuseInstance.search(query, { limit });
+  if (!fullFuse || !contentCache) return [];
+  const results = fullFuse.search(query, { limit });
   return results.map((r) => ({
     item: stripContent(r.item),
     score: 1 - (r.score ?? 1),
@@ -66,122 +81,60 @@ export function search(query: string, limit = 10): SearchResult[] {
   }));
 }
 
-/**
- * Smart FAQ match for chatbot — returns best matching FAQ.
- *
- * Strategy order:
- * 1. Exact title match (highest confidence)
- * 2. Title contains all keywords (high confidence)
- * 3. Fuse.js best result (medium confidence — uses all fields with proper weighting)
- *
- * Key fix: never match on body content alone — prevents false positives
- * when a keyword appears in an unrelated FAQ's long answer text.
- */
+// ── Chat FAQ match (for chatbot — title-focused, high precision) ────
+
 export function exactFaqMatch(query: string): ContentItem | null {
   ensureFreshIndex();
-  if (!contentCache || !fuseInstance) return null;
+  if (!contentCache || !titleFuse) return null;
 
   const normalized = query.toLowerCase().trim()
     .replace(/^[¿?¡!]+/, '').replace(/[?!]+$/, '').trim();
+  const normNA = noAccent(normalized);
 
-  // Normalize accents for matching
-  const noAccent = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-  const normNoAccent = noAccent(normalized);
-
-  // Strategy 1: Exact title match (with and without accents)
+  // Strategy 1: Exact title match
   for (const item of contentCache) {
-    const titleNorm = item.title.toLowerCase().replace(/^[¿?¡!]+/, '').replace(/[?!]+$/, '').trim();
-    if (titleNorm === normalized || noAccent(titleNorm) === normNoAccent) return item;
+    const t = noAccent(item.title.toLowerCase()).replace(/^[¿?¡!]+/, '').replace(/[?!]+$/, '').trim();
+    if (t === normNA) return item;
   }
 
-  // Extract meaningful keywords
-  const keywords = normalized.split(/\s+/)
-    .filter((w) => w.length > 2 && !STOPWORDS.has(w));
-
-  if (keywords.length === 0) return null;
-
-  // Strategy 2: Title-priority keyword scoring (for multi-word queries)
-  if (keywords.length >= 2) {
-    let bestMatch: ContentItem | null = null;
-    let bestScore = 0;
-
-    for (const item of contentCache) {
-      const title = item.title.toLowerCase();
-      const tags = item.tags.join(' ').toLowerCase();
-
-      // Title matches worth 3x, tag matches worth 2x
-      let score = 0;
-      for (const kw of keywords) {
-        if (title.includes(kw)) score += 3;
-        else if (tags.includes(kw)) score += 2;
-      }
-
-      const maxPossible = keywords.length * 3;
-      const pct = score / maxPossible;
-
-      if (pct > bestScore && pct >= 0.4) {
-        bestScore = pct;
-        bestMatch = item;
-      }
-    }
-
-    if (bestMatch && bestScore >= 0.5) return bestMatch;
-  }
-
-  // Strategy 2.5: For short queries where all keywords were stopwords,
-  // try the original query against tags (accent-normalized)
-  if (keywords.length === 0 && normalized.length >= 3) {
-    for (const item of contentCache) {
-      const titleNoAccent = noAccent(item.title.toLowerCase());
-      if (titleNoAccent.includes(normNoAccent)) return item;
+  // Strategy 2: Title CONTAINS the query (for short queries like "quien es mi asesor")
+  // Pick the shortest matching title (most specific)
+  const containsMatches: Array<{ item: ContentItem; len: number }> = [];
+  for (const item of contentCache) {
+    const t = noAccent(item.title.toLowerCase()).replace(/^[¿?¡!]+/, '').replace(/[?!]+$/, '').trim();
+    if (t.includes(normNA)) {
+      containsMatches.push({ item, len: t.length });
     }
   }
+  if (containsMatches.length > 0) {
+    containsMatches.sort((a, b) => a.len - b.len);
+    return containsMatches[0].item;
+  }
 
-  // Strategy 3: Fuse.js — try both original query and accent-stripped version
-  const fuseResults = fuseInstance.search(normalized, { limit: 5 });
-  const fuseResultsNoAccent = normNoAccent !== normalized
-    ? fuseInstance.search(normNoAccent, { limit: 5 })
-    : [];
+  // Strategy 3: Title Fuse search (title + tags only, NOT content)
+  const results = titleFuse.search(normalized, { limit: 5 });
+  // Also try without accents
+  const resultsNA = normNA !== normalized ? titleFuse.search(normNA, { limit: 5 }) : [];
 
-  // Merge, deduplicate, and re-rank with title similarity bonus
+  // Merge, dedupe, pick best
   const seen = new Set<string>();
-  const allFuse = [...fuseResults, ...fuseResultsNoAccent]
-    .filter((r) => { const k = r.item.id; if (seen.has(k)) return false; seen.add(k); return true; })
-    .map((r) => {
-      const titleClean = noAccent(r.item.title.toLowerCase()).replace(/^[¿?¡!]+/, '').replace(/[?!]+$/, '').trim();
-      let boost = 0;
+  const all = [...results, ...resultsNA]
+    .filter((r) => { if (seen.has(r.item.id)) return false; seen.add(r.item.id); return true; })
+    .sort((a, b) => (a.score ?? 1) - (b.score ?? 1));
 
-      // Big boost: query words appear in the title in order (semantic match)
-      const queryWords = normNoAccent.split(/\s+/).filter((w) => w.length > 2);
-      const titleWords = titleClean.split(/\s+/);
-      const matchingWords = queryWords.filter((qw) => titleWords.some((tw) => tw.includes(qw) || qw.includes(tw)));
-      boost = (matchingWords.length / Math.max(queryWords.length, 1)) * 0.4;
-
-      // Extra boost if the entire normalized query is nearly the title
-      if (titleClean.includes(normNoAccent) || normNoAccent.includes(titleClean)) {
-        boost += 0.3;
-      }
-
-      return { ...r, adjustedScore: (r.score ?? 1) - boost };
-    })
-    .sort((a, b) => a.adjustedScore - b.adjustedScore);
-
-  if (allFuse.length > 0 && allFuse[0].adjustedScore < 0.75) {
-    return allFuse[0].item;
+  if (all.length > 0 && (all[0].score ?? 1) < 0.6) {
+    return all[0].item;
   }
 
   return null;
 }
 
-/**
- * Retrieve relevant content for RAG context.
- * Uses Fuse.js primarily (better ranking than keyword scoring for retrieval).
- */
+// ── RAG retrieval (for chatbot context when no exact match) ─────────
+
 export function retrieveForRAG(query: string, limit = 5): ContentItem[] {
   ensureFreshIndex();
-  if (!fuseInstance || !contentCache) return [];
-
-  const results = fuseInstance.search(query, { limit });
+  if (!fullFuse || !contentCache) return [];
+  const results = fullFuse.search(query, { limit });
   return results
     .filter((r) => (r.score ?? 1) < 0.65)
     .map((r) => r.item);
