@@ -138,21 +138,22 @@ async function findOrCreateContact(url: string, key: string, params: any): Promi
 }
 
 async function createConversation(url: string, key: string, contactId: string, params: any): Promise<string> {
+  // Get channelId from settings or use default WEB_WIDGET
+  const channelId = getConfig('nexus_channel_id') || '4bf0bccb-3741-4957-aefc-81d8f9693bfa';
+
   const res = await nexusFetch(url, key, '/api/v1/conversations', {
     method: 'POST',
     body: JSON.stringify({
+      channelId,
       contactId,
       subject: params.subject,
-      channel: 'WEB',
       status: 'OPEN',
-      priority: 'NORMAL',
+      priority: 'HIGH',
       handlingMode: 'HUMAN_REQUIRED',
-      tags: ['cnci-escalation', params.category],
       metadata: {
         source: 'cnci-help-chatbot',
         category: params.category,
         studentId: params.studentId || '',
-        originalChannel: params.channel || 'chat',
       },
     }),
   });
@@ -169,7 +170,7 @@ async function addChatHistory(url: string, key: string, conversationId: string, 
       body: JSON.stringify({
         content: msg.content,
         contentType: 'TEXT',
-        source: msg.role === 'user' ? 'CONTACT' : 'AI',
+        source: msg.role === 'user' ? 'CUSTOMER' : 'AI_AUTO',
         direction: msg.role === 'user' ? 'INBOUND' : 'OUTBOUND',
         isInternal: false,
         metadata: {
@@ -193,12 +194,49 @@ async function addChatHistory(url: string, key: string, conversationId: string, 
   });
 }
 
-async function nexusFetch(baseUrl: string, apiKey: string, path: string, options?: RequestInit): Promise<Response> {
+// ── Nexus Auth — auto-login with JWT refresh ─────────────────────
+
+let nexusToken: string | null = null;
+let nexusTokenExpiry = 0;
+
+async function getNexusToken(baseUrl: string): Promise<string> {
+  // Return cached token if still valid (with 2 min buffer)
+  if (nexusToken && Date.now() < nexusTokenExpiry - 120_000) {
+    return nexusToken;
+  }
+
+  const email = getConfig('nexus_email') || process.env.NEXUS_EMAIL || 'admin@nexus.mx';
+  const password = getConfig('nexus_password') || process.env.NEXUS_PASSWORD || '';
+
+  if (!password) {
+    throw new Error('Nexus password not configured');
+  }
+
+  const res = await fetch(`${baseUrl}/api/v1/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+    signal: AbortSignal.timeout(10000),
+  });
+
+  if (!res.ok) throw new Error(`Nexus login failed: ${res.status}`);
+
+  const data = await res.json();
+  nexusToken = data.data?.accessToken;
+  nexusTokenExpiry = Date.now() + 14 * 60_000; // JWT lasts 15 min, refresh at 14
+
+  if (!nexusToken) throw new Error('No token in Nexus login response');
+  return nexusToken;
+}
+
+async function nexusFetch(baseUrl: string, _apiKey: string, path: string, options?: RequestInit): Promise<Response> {
+  const token = await getNexusToken(baseUrl);
+
   const res = await fetch(`${baseUrl}${path}`, {
     ...options,
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
+      'Authorization': `Bearer ${token}`,
       ...(options?.headers || {}),
     },
     signal: AbortSignal.timeout(10000),

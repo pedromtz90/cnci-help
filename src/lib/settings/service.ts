@@ -7,7 +7,7 @@ import { getDb } from '@/lib/db/database';
 import { createHash } from 'crypto';
 
 const SECRET_KEYS = new Set([
-  'azure_ad_client_secret', 'smtp_pass', 'nexus_api_key', 'ai_api_key',
+  'azure_ad_client_secret', 'smtp_pass', 'nexus_api_key', 'nexus_password', 'ai_api_key',
 ]);
 
 function encode(key: string, value: string): string {
@@ -77,6 +77,9 @@ export interface PlatformSettings {
   smtp_from: string;
   nexus_api_url: string;
   nexus_api_key: string;
+  nexus_email: string;
+  nexus_password: string;
+  nexus_channel_id: string;
   ai_api_key: string;
   ai_model: string;
   staff_emails: string;
@@ -98,6 +101,9 @@ const DEFAULTS: PlatformSettings = {
   smtp_from: 'soporte@cncivirtual.mx',
   nexus_api_url: '',
   nexus_api_key: '',
+  nexus_email: 'admin@nexus.mx',
+  nexus_password: '',
+  nexus_channel_id: '4bf0bccb-3741-4957-aefc-81d8f9693bfa',
   ai_api_key: '',
   ai_model: 'claude-haiku-4-5-20251001',
   staff_emails: 'admin@cncivirtual.mx,soporte@cncivirtual.mx,servicios@cncivirtual.mx,cobranza@cncivirtual.mx,titulacion@cncivirtual.mx',
