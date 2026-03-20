@@ -143,17 +143,25 @@ export function exactFaqMatch(query: string): ContentItem | null {
     ? fuseInstance.search(normNoAccent, { limit: 5 })
     : [];
 
-  // Merge, deduplicate, and re-rank: boost results whose title contains query keywords
+  // Merge, deduplicate, and re-rank with title similarity bonus
   const seen = new Set<string>();
   const allFuse = [...fuseResults, ...fuseResultsNoAccent]
     .filter((r) => { const k = r.item.id; if (seen.has(k)) return false; seen.add(k); return true; })
     .map((r) => {
-      const titleLower = noAccent(r.item.title.toLowerCase());
-      // Boost score if title directly contains query keywords
+      const titleClean = noAccent(r.item.title.toLowerCase()).replace(/^[¿?¡!]+/, '').replace(/[?!]+$/, '').trim();
       let boost = 0;
-      for (const kw of keywords) {
-        if (titleLower.includes(noAccent(kw))) boost += 0.15;
+
+      // Big boost: query words appear in the title in order (semantic match)
+      const queryWords = normNoAccent.split(/\s+/).filter((w) => w.length > 2);
+      const titleWords = titleClean.split(/\s+/);
+      const matchingWords = queryWords.filter((qw) => titleWords.some((tw) => tw.includes(qw) || qw.includes(tw)));
+      boost = (matchingWords.length / Math.max(queryWords.length, 1)) * 0.4;
+
+      // Extra boost if the entire normalized query is nearly the title
+      if (titleClean.includes(normNoAccent) || normNoAccent.includes(titleClean)) {
+        boost += 0.3;
       }
+
       return { ...r, adjustedScore: (r.score ?? 1) - boost };
     })
     .sort((a, b) => a.adjustedScore - b.adjustedScore);
