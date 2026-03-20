@@ -231,7 +231,7 @@ export function exactFaqMatch(query: string): ContentItem | null {
 
       // Require minimum score AND significant gap vs second result
       // A good match typically scores 15+ on a single title keyword match
-      if (scored.length > 0 && scored[0].score >= 5) {
+      if (scored.length > 0 && scored[0].score >= 10) {
         result = scored[0].doc.item;
       }
     }
