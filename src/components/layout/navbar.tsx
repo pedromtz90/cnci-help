@@ -44,6 +44,9 @@ export function Navbar() {
                   <Link href="/admin/training" className="text-orange-500 hover:text-orange-600 transition-colors flex items-center gap-1.5 text-xs font-bold">
                     <Brain size={14} /> Entrenar
                   </Link>
+                  <Link href="/admin/import" className="text-slate-500 hover:text-blue-600 transition-colors flex items-center gap-1.5 text-xs font-bold">
+                    <FileText size={14} /> Importar
+                  </Link>
                 </>
               )}
               {isDirector && (
