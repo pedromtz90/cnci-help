@@ -125,9 +125,8 @@ export function exactFaqMatch(query: string): ContentItem | null {
   }
 
   // Strategy 3: Fuse.js — works well for both single words and phrases
-  // because it uses weighted field matching (title 45%, excerpt 25%, tags 20%)
   const fuseResults = fuseInstance.search(normalized, { limit: 1 });
-  if (fuseResults.length > 0 && (fuseResults[0].score ?? 1) < 0.35) {
+  if (fuseResults.length > 0 && (fuseResults[0].score ?? 1) < 0.55) {
     return fuseResults[0].item;
   }
 
