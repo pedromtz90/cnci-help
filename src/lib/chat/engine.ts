@@ -112,8 +112,9 @@ function buildFaqResponse(faq: ContentItem, start: number): ChatResponse {
 function buildRetrievalResponse(items: ContentItem[], start: number): ChatResponse {
   const best = items[0];
   const stripped = stripMdx(best.content);
-  const content = stripped.length > 1500
-    ? stripped.slice(0, 1500).replace(/\s+\S*$/, '') + '\n\nPuedes ver el artículo completo para más detalles.'
+  // Send full content — only truncate if extremely long
+  const content = stripped.length > 2000
+    ? stripped.slice(0, 2000).replace(/[.!?]\s[^.!?]*$/, '.') + '\n\nConsulta el artículo completo para más información.'
     : stripped;
 
   const related = items.slice(1).map((item) => ({
@@ -124,7 +125,7 @@ function buildRetrievalResponse(items: ContentItem[], start: number): ChatRespon
   }));
 
   return {
-    content: `${content}\n\nPuedes ver más detalles en el artículo completo.`,
+    content,
     sources: [
       { title: best.title, slug: best.slug, type: best.type, category: best.category },
       ...related,
@@ -145,9 +146,10 @@ async function buildLLMResponse(
   start: number,
   apiKey: string,
 ): Promise<ChatResponse> {
+  // Label each source clearly so LLM can cite them
   const contextText = context
-    .map((item) => `[${item.title}]\n${stripMdx(item.content).slice(0, 800)}`)
-    .join('\n\n---\n\n');
+    .map((item, i) => `[FUENTE ${i + 1}: ${item.title}]\n${stripMdx(item.content).slice(0, 1000)}`)
+    .join('\n\n===\n\n');
 
   try {
     const response = await fetch('https://api.anthropic.com/v1/messages', {
@@ -159,12 +161,21 @@ async function buildLLMResponse(
       },
       body: JSON.stringify({
         model: process.env.AI_MODEL || 'claude-haiku-4-5-20251001',
-        max_tokens: 512,
-        system: `${getSystemPrompt()}\n\nCONTEXTO DISPONIBLE:\n${contextText}`,
+        max_tokens: 300,
+        system: `${getSystemPrompt()}
+
+INSTRUCCIONES CRÍTICAS:
+- Solo puedes usar información de las FUENTES proporcionadas abajo
+- Si la respuesta NO está en las fuentes, di "No tengo esa información" y sugiere contactar a Servicios Estudiantiles
+- NUNCA inventes datos, fechas, costos, correos o procesos
+- Cita la fuente cuando respondas (ej: "Según nuestra información sobre [tema]...")
+- Responde en máximo 2-3 oraciones claras
+
+${contextText}`,
         messages: [
-          ...(req.history || []).slice(-6).map((h) => ({
+          ...(req.history || []).slice(-4).map((h) => ({
             role: h.role,
-            content: h.content,
+            content: h.content.slice(0, 500),
           })),
           { role: 'user', content: req.message },
         ],
@@ -231,11 +242,11 @@ function detectDepartment(msg: string): { name: string; email: string } {
 
 function stripMdx(mdx: string): string {
   return mdx
-    .replace(/^---[\s\S]*?---/m, '')
-    .replace(/^#{1,6}\s+/gm, '')
-    .replace(/\*\*([^*]+)\*\*/g, '$1')
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-    .replace(/^[-*]\s+/gm, '• ')
+    .replace(/^---[\s\S]*?---/m, '')        // Remove frontmatter
+    .replace(/^#{1,6}\s+/gm, '')            // Remove heading markers
+    .replace(/\*\*([^*]+)\*\*/g, '$1')      // Bold → plain
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1 ($2)')  // Links → text (URL preserved)
+    .replace(/^[-*]\s+/gm, '• ')            // Bullets
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 }

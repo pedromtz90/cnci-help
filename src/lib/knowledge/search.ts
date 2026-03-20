@@ -1,22 +1,26 @@
 /**
- * CNCI Search Engine — TF-IDF based search with Spanish language support.
+ * CNCI Search Engine v3 — TF-IDF with query cache, Spanish support, alias system.
  *
- * Why not Fuse.js: Fuse is fuzzy string matching, not information retrieval.
- * With 481+ FAQs, it returns wrong results because it matches character patterns
- * instead of semantic relevance. TF-IDF ranks by how important a word is
- * to a specific document vs the entire corpus — which is what we need.
+ * Fixes from audit:
+ * - IDF formula corrected (standard log(N/df) without +1 bias)
+ * - Query length normalization removed (was penalizing long queries)
+ * - Title weight increased to 8x (was 5x — too low for FAQ corpus)
+ * - Query result cache added (LRU, 2000 entries)
+ * - Alias coverage expanded
+ * - Stem function simplified (plurals only, no false positives)
+ * - stripMdx preserves URLs
  */
 import type { ContentItem, ContentMeta, SearchResult } from '@/types/content';
 import { getAllDynamic, getIndexVersion } from './dynamic';
 
-// ── Spanish NLP helpers ─────────────────────────────────────────────
+// ── Spanish NLP ─────────────────────────────────────────────────────
 
 const STOPWORDS = new Set([
   'como', 'cómo', 'que', 'qué', 'cual', 'cuál', 'donde', 'dónde',
   'cuando', 'cuándo', 'por', 'para', 'con', 'sin', 'los', 'las',
   'del', 'una', 'uno', 'unos', 'unas', 'mis', 'sus', 'ese', 'esa',
   'esto', 'esta', 'hay', 'ser', 'hago', 'puedo', 'debo', 'tengo',
-  'necesito', 'quiero', 'and', 'for', 'are', 'but', 'not', 'the',
+  'necesito', 'quiero', 'the', 'and', 'for', 'are', 'but', 'not',
   'ver', 'puede', 'hacer', 'saber', 'tener', 'dar', 'pedir', 'desde',
   'entre', 'sobre', 'también', 'tambien', 'más', 'mas', 'pero',
   'muy', 'bien', 'solo', 'todo', 'toda', 'todos', 'todas', 'otro',
@@ -24,26 +28,21 @@ const STOPWORDS = new Set([
 ]);
 
 function normalize(text: string): string {
-  return text
-    .toLowerCase()
-    .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // remove accents
+  return text.toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
     .replace(/[¿?¡!.,;:()"\[\]{}]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+    .replace(/\s+/g, ' ').trim();
 }
 
 function tokenize(text: string): string[] {
-  return normalize(text)
-    .split(' ')
-    .filter((w) => w.length > 1 && !STOPWORDS.has(w));
+  return normalize(text).split(' ').filter((w) => w.length > 1 && !STOPWORDS.has(w));
 }
 
-/** Light normalizer — only removes plurals. No aggressive stemming. */
+/** Light plural removal only — no aggressive stemming */
 function stem(word: string): string {
-  if (word.length <= 3) return word;
-  // Only remove simple plurals — nothing else
+  if (word.length <= 4) return word;
   if (word.endsWith('es') && word.length > 5) return word.slice(0, -2);
-  if (word.endsWith('s') && word.length > 4 && !word.endsWith('ss')) return word.slice(0, -1);
+  if (word.endsWith('s') && word.length > 4) return word.slice(0, -1);
   return word;
 }
 
@@ -51,15 +50,14 @@ function stemTokens(tokens: string[]): string[] {
   return tokens.map(stem);
 }
 
-// ── TF-IDF Index ────────────────────────────────────────────────────
+// ── Index structures ────────────────────────────────────────────────
 
 interface IndexedDoc {
   item: ContentItem;
   titleTokens: string[];
   tagTokens: string[];
   contentTokens: string[];
-  allTokens: string[];
-  titleRaw: string; // normalized, no accent, for contains-match
+  titleRaw: string;
 }
 
 let contentCache: ContentItem[] | null = null;
@@ -67,6 +65,29 @@ let indexedDocs: IndexedDoc[] = [];
 let idf: Map<string, number> = new Map();
 let lastIndexVersion = -1;
 let staticContent: ContentItem[] = [];
+
+// Query result cache (LRU)
+const queryCache = new Map<string, { results: any[]; time: number }>();
+const CACHE_TTL = 120_000; // 2 minutes
+const CACHE_MAX = 2000;
+
+function getCachedResult(key: string): any[] | null {
+  const cached = queryCache.get(key);
+  if (cached && Date.now() - cached.time < CACHE_TTL) return cached.results;
+  if (cached) queryCache.delete(key);
+  return null;
+}
+
+function setCachedResult(key: string, results: any[]): void {
+  if (queryCache.size >= CACHE_MAX) {
+    // Evict oldest
+    const first = queryCache.keys().next().value;
+    if (first) queryCache.delete(first);
+  }
+  queryCache.set(key, { results, time: Date.now() });
+}
+
+// ── Index management ────────────────────────────────────────────────
 
 export function initSearchIndex(content: ContentItem[]): void {
   staticContent = content;
@@ -81,84 +102,67 @@ function rebuildIndex(): void {
     contentCache = [...staticContent];
   }
 
-  // Build indexed documents
   indexedDocs = contentCache.map((item) => {
     const titleTokens = stemTokens(tokenize(item.title));
     const tagTokens = stemTokens(item.tags.flatMap((t) => tokenize(t)));
     const contentTokens = stemTokens(tokenize(
-      (item.excerpt || '') + ' ' + item.content.slice(0, 300)
+      (item.excerpt || '') + ' ' + item.content.slice(0, 400)
     ));
-    const allTokens = [...titleTokens, ...tagTokens, ...contentTokens];
     const titleRaw = normalize(item.title);
-
-    return { item, titleTokens, tagTokens, contentTokens, allTokens, titleRaw };
+    return { item, titleTokens, tagTokens, contentTokens, titleRaw };
   });
 
-  // Compute IDF (inverse document frequency)
-  const docCount = indexedDocs.length;
+  // Compute IDF — standard formula: log(N / df)
+  const N = indexedDocs.length;
   const termDocFreq = new Map<string, number>();
-
   for (const doc of indexedDocs) {
-    const uniqueTerms = new Set(doc.allTokens);
-    for (const term of uniqueTerms) {
-      termDocFreq.set(term, (termDocFreq.get(term) || 0) + 1);
-    }
+    const unique = new Set([...doc.titleTokens, ...doc.tagTokens, ...doc.contentTokens]);
+    for (const term of unique) termDocFreq.set(term, (termDocFreq.get(term) || 0) + 1);
   }
-
   idf = new Map();
   for (const [term, df] of termDocFreq) {
-    idf.set(term, Math.log((docCount + 1) / (df + 1)) + 1);
+    idf.set(term, Math.log(N / df)); // Standard IDF, no +1 bias
   }
 
   lastIndexVersion = getIndexVersion();
+  queryCache.clear(); // Invalidate all caches on reindex
 }
 
 function ensureFreshIndex(): void {
   if (!contentCache) return;
   try {
-    const currentVersion = getIndexVersion();
-    if (currentVersion !== lastIndexVersion) rebuildIndex();
+    if (getIndexVersion() !== lastIndexVersion) rebuildIndex();
   } catch {}
 }
 
-/**
- * Score a document against a query using weighted TF-IDF.
- * Title matches are worth 5x, tag matches 3x, content matches 1x.
- */
+// ── Scoring ─────────────────────────────────────────────────────────
+
 function scoreDocument(doc: IndexedDoc, queryStems: string[]): number {
   let score = 0;
-
   for (const qs of queryStems) {
-    const idfScore = idf.get(qs) || 1;
+    const idfVal = idf.get(qs) || 0;
+    if (idfVal === 0) continue; // Unknown term — skip
 
-    // Match: exact word or word starts with query term (min 4 chars to avoid false positives)
-    const matches = (t: string) => t === qs || (qs.length >= 4 && t.startsWith(qs));
+    const match = (t: string) => t === qs || (qs.length >= 4 && t.startsWith(qs));
 
-    // Title match (highest weight)
-    const titleTF = doc.titleTokens.filter(matches).length;
-    score += titleTF * idfScore * 5;
-
-    // Tag match
-    const tagTF = doc.tagTokens.filter(matches).length;
-    score += tagTF * idfScore * 3;
-
-    // Content match
-    const contentTF = doc.contentTokens.filter(matches).length;
-    score += contentTF * idfScore * 1;
+    // Title = 8x (FAQ corpus — title IS the query), tags = 3x, content = 1x
+    score += doc.titleTokens.filter(match).length * idfVal * 8;
+    score += doc.tagTokens.filter(match).length * idfVal * 3;
+    score += doc.contentTokens.filter(match).length * idfVal * 1;
   }
-
-  // Normalize by query length to make scores comparable
-  return queryStems.length > 0 ? score / queryStems.length : 0;
+  // No division by query length — let absolute score determine relevance
+  return score;
 }
 
 // ── Public API ──────────────────────────────────────────────────────
 
-/**
- * Search for content (used by search page and API).
- */
 export function search(query: string, limit = 10): SearchResult[] {
   ensureFreshIndex();
   if (!contentCache) return [];
+
+  const cacheKey = `s:${query}:${limit}`;
+  const cached = getCachedResult(cacheKey);
+  if (cached) return cached as SearchResult[];
 
   const queryStems = stemTokens(tokenize(query));
   if (queryStems.length === 0) return [];
@@ -170,77 +174,71 @@ export function search(query: string, limit = 10): SearchResult[] {
     .slice(0, limit);
 
   const maxScore = scored[0]?.score || 1;
-
-  return scored.map((s) => ({
+  const results = scored.map((s) => ({
     item: stripContent(s.doc.item),
-    score: s.score / maxScore, // Normalize to 0-1
+    score: s.score / maxScore,
   }));
+
+  setCachedResult(cacheKey, results);
+  return results;
 }
 
-/**
- * Find best matching FAQ for chatbot.
- * Strategy:
- * 1. Exact title match
- * 2. Title contains query
- * 3. TF-IDF ranked search (title-weighted)
- */
 export function exactFaqMatch(query: string): ContentItem | null {
   ensureFreshIndex();
   if (!contentCache) return null;
 
   const norm = normalize(query);
+  const cacheKey = `faq:${norm}`;
+  const cached = getCachedResult(cacheKey);
+  if (cached) return cached[0] || null;
 
-  // Strategy 0: Query aliases — common student phrases mapped to correct topics
-  const aliasMatch = matchAlias(norm);
-  if (aliasMatch) {
-    for (const doc of indexedDocs) {
-      if (doc.titleRaw.includes(aliasMatch)) return doc.item;
+  let result: ContentItem | null = null;
+
+  // Strategy 0: Aliases (common student phrases → correct FAQ)
+  const aliasHint = matchAlias(norm);
+  if (aliasHint) {
+    const matches = indexedDocs.filter((d) => d.titleRaw.includes(aliasHint));
+    if (matches.length > 0) {
+      matches.sort((a, b) => a.titleRaw.length - b.titleRaw.length);
+      result = matches[0].item;
     }
   }
 
   // Strategy 1: Exact title match
-  for (const doc of indexedDocs) {
-    if (doc.titleRaw === norm) return doc.item;
+  if (!result) {
+    for (const doc of indexedDocs) {
+      if (doc.titleRaw === norm) { result = doc.item; break; }
+    }
   }
 
-  // Strategy 2: Title contains query (shortest = most specific)
-  if (norm.length >= 4) {
-    const matches: IndexedDoc[] = [];
-    for (const doc of indexedDocs) {
-      if (doc.titleRaw.includes(norm)) {
-        matches.push(doc);
-      }
-    }
+  // Strategy 2: Title contains query (pick shortest = most specific)
+  if (!result && norm.length >= 4) {
+    const matches = indexedDocs.filter((d) => d.titleRaw.includes(norm));
     if (matches.length > 0) {
       matches.sort((a, b) => a.titleRaw.length - b.titleRaw.length);
-      return matches[0].item;
+      result = matches[0].item;
     }
   }
 
-  // Strategy 3: TF-IDF search
-  const queryStems = stemTokens(tokenize(query));
-  if (queryStems.length === 0) return null;
+  // Strategy 3: TF-IDF
+  if (!result) {
+    const queryStems = stemTokens(tokenize(query));
+    if (queryStems.length > 0) {
+      const scored = indexedDocs
+        .map((doc) => ({ doc, score: scoreDocument(doc, queryStems) }))
+        .filter((s) => s.score > 0)
+        .sort((a, b) => b.score - a.score);
 
-  const scored = indexedDocs
-    .map((doc) => ({ doc, score: scoreDocument(doc, queryStems) }))
-    .filter((s) => s.score > 0)
-    .sort((a, b) => b.score - a.score);
+      if (scored.length > 0 && scored[0].score > 0) {
+        result = scored[0].doc.item;
+      }
+    }
+  }
 
-  if (scored.length === 0) return null;
-
-  // Only return if score is significantly above the second result (confidence)
-  const best = scored[0];
-  const second = scored[1];
-  const minScore = 2; // minimum absolute score to consider a match
-
-  if (best.score < minScore) return null;
-
-  return best.doc.item;
+  setCachedResult(cacheKey, result ? [result] : []);
+  return result;
 }
 
-/**
- * Retrieve context for RAG.
- */
 export function retrieveForRAG(query: string, limit = 5): ContentItem[] {
   ensureFreshIndex();
   if (!contentCache) return [];
@@ -250,7 +248,7 @@ export function retrieveForRAG(query: string, limit = 5): ContentItem[] {
 
   return indexedDocs
     .map((doc) => ({ doc, score: scoreDocument(doc, queryStems) }))
-    .filter((s) => s.score > 1)
+    .filter((s) => s.score > 0)
     .sort((a, b) => b.score - a.score)
     .slice(0, limit)
     .map((s) => s.doc.item);
@@ -261,39 +259,52 @@ function stripContent(item: ContentItem): ContentMeta {
   return meta;
 }
 
-/**
- * Query aliases — maps common student phrases to the right FAQ title keyword.
- * This handles cases where TF-IDF fails due to word ambiguity.
- */
+// ── Query Aliases ───────────────────────────────────────────────────
+
 const QUERY_ALIASES: Array<{ patterns: RegExp; titleHint: string }> = [
-  // Acceso a plataformas
-  { patterns: /como entro|como ingreso|como accedo|no puedo entrar|como inicio sesion/, titleHint: 'como accedo a blackboard' },
-  { patterns: /no me acuerdo.*(usuario|contrasena|clave|password)|olvide mi (usuario|contrasena|clave)/, titleHint: 'como restablezco mi contrasena' },
-  { patterns: /como entro a office|como uso office/, titleHint: 'como accedo a office' },
+  // Acceso
+  { patterns: /como entro|como ingreso|como accedo|no puedo entrar|como inicio sesion|como abro sesion/, titleHint: 'como accedo a blackboard' },
+  { patterns: /no me acuerdo.*(usuario|contrasena|clave)|olvide mi|resetear contrasena|cambiar clave|recuperar contrasena/, titleHint: 'como restablezco mi contrasena' },
+  { patterns: /como entro a office|como uso office|outlook|correo institucional|email cnci/, titleHint: 'como accedo a office' },
 
   // Pagos
-  { patterns: /como pago|donde pago|metodo.*(pago|pagar)|formas? de pago/, titleHint: 'metodos de pago' },
-  { patterns: /me cobraron.*(doble|mas|extra)|cobro.*(doble|duplicado)|pague.*doble/, titleHint: 'pago' },
-  { patterns: /cuando.*(pago|pagar|fecha.*pago|limite.*pago)/, titleHint: 'fecha limite de pago' },
+  { patterns: /como pago|donde pago|metodo.*(pago|pagar)|formas? de pago|transferencia|tarjeta|oxxo|deposito/, titleHint: 'metodos de pago' },
+  { patterns: /me cobraron.*(doble|mas|extra)|cobro.*(doble|duplicado)|reembolso|devolucion/, titleHint: 'reembolso' },
+  { patterns: /cuando.*(pago|pagar|fecha.*pago|limite.*pago)|vencimiento|plazo.*pago/, titleHint: 'fecha limite de pago' },
+  { patterns: /cuanto cuesta|precio|costo.*(carrera|inscripcion|semestre|mensualidad)/, titleHint: 'costo' },
 
   // Horarios
-  { patterns: /a que hora.*(llam|atiend|abren|contact)|horario.*(atencion|oficina|servicio)/, titleHint: 'horarios de atencion' },
+  { patterns: /a que hora.*(llam|atiend|abren|contact)|horario.*(atencion|oficina|servicio)|cuando atienden/, titleHint: 'horarios de atencion' },
+  { patterns: /horario.*(clase|materia|curso)|cuando.*clase/, titleHint: 'horarios de clase' },
 
   // Inscripción
-  { patterns: /quiero (inscribirme|entrar|estudiar)|como me inscribo|requisitos.*inscripcion/, titleHint: 'como me inscribo' },
+  { patterns: /quiero (inscribirme|entrar|estudiar)|como me inscribo|requisitos.*inscripcion|proxima generacion/, titleHint: 'como me inscribo' },
 
-  // Enviar tarea
-  { patterns: /como (envio|subo|entrego|mando).*tarea/, titleHint: 'como envio una tarea' },
+  // Tareas
+  { patterns: /como (envio|subo|entrego|mando).*(tarea|actividad|trabajo|evidencia|archivo)/, titleHint: 'como envio una tarea' },
 
   // Tutor/asesor
-  { patterns: /mi tutor no (contesta|responde|califica)/, titleHint: 'mi tutor no' },
-  { patterns: /donde.*(tutor|localizo.*tutor)/, titleHint: 'localizo a mi tutor' },
+  { patterns: /mi tutor no (contesta|responde|califica|ve)/, titleHint: 'mi tutor no' },
+  { patterns: /donde.*(tutor|localizo.*tutor)|contactar tutor|email tutor/, titleHint: 'localizo a mi tutor' },
+  { patterns: /mi maestro|el profesor|docente no responde/, titleHint: 'tutor no' },
 
   // Facturación
-  { patterns: /como facturo|quiero factura|necesito factura|datos.*factur/, titleHint: 'factura' },
+  { patterns: /como facturo|quiero factura|necesito factura|datos.*factur|recibo|comprobante|rfc/, titleHint: 'factura' },
 
   // Becas
-  { patterns: /que becas|como.*beca|solicito.*beca|pido.*beca/, titleHint: 'beca' },
+  { patterns: /que becas|como.*beca|solicito.*beca|pido.*beca|descuento|condonacion/, titleHint: 'beca' },
+
+  // Técnico
+  { patterns: /no funciona|error|fallo|bug|problema.*(plataforma|sistema|blackboard)/, titleHint: 'no puedo' },
+
+  // Certificado/título
+  { patterns: /certificado|diploma|titulo profesional|cedula/, titleHint: 'certificado' },
+
+  // Calificaciones
+  { patterns: /calificacion|notas|promedio|kardex|boleta/, titleHint: 'calificacion' },
+
+  // Biblioteca
+  { patterns: /biblioteca|libros|recursos|apuntes|material/, titleHint: 'biblioteca' },
 ];
 
 function matchAlias(normalizedQuery: string): string | null {
