@@ -106,5 +106,12 @@ function initSchema(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_knowledge_category ON knowledge_items(category);
     CREATE INDEX IF NOT EXISTS idx_knowledge_visibility ON knowledge_items(visibility);
     CREATE INDEX IF NOT EXISTS idx_knowledge_slug ON knowledge_items(slug);
+
+    -- Platform settings (key-value store)
+    CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
   `);
 }
