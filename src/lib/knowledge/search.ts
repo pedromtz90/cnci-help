@@ -8,31 +8,27 @@ let lastIndexVersion = -1;
 
 const FUSE_OPTIONS = {
   keys: [
-    { name: 'title', weight: 0.35 },
+    { name: 'title', weight: 0.45 },
     { name: 'excerpt', weight: 0.25 },
-    { name: 'tags', weight: 0.25 },
-    { name: 'content', weight: 0.15 },
+    { name: 'tags', weight: 0.20 },
+    { name: 'content', weight: 0.10 },
   ],
-  threshold: 0.5,
+  threshold: 0.45,
   ignoreLocation: true,
   includeScore: true,
   includeMatches: true,
   minMatchCharLength: 2,
 };
 
-// Common Spanish stopwords to filter out
 const STOPWORDS = new Set([
   'como', 'cómo', 'que', 'qué', 'cual', 'cuál', 'donde', 'dónde',
   'cuando', 'cuándo', 'por', 'para', 'con', 'sin', 'los', 'las',
   'del', 'una', 'uno', 'unos', 'unas', 'mis', 'sus', 'ese', 'esa',
   'esto', 'esta', 'hay', 'ser', 'hago', 'puedo', 'debo', 'tengo',
   'necesito', 'quiero', 'the', 'and', 'for', 'are', 'but', 'not',
+  'ver', 'puede', 'hacer', 'saber', 'tener', 'dar', 'pedir',
 ]);
 
-/**
- * Initialize search index — merges static MDX content + dynamic DB content.
- * Auto-refreshes when dynamic content changes (version bump).
- */
 let staticContent: ContentItem[] = [];
 
 export function initSearchIndex(content: ContentItem[]): void {
@@ -51,13 +47,12 @@ function rebuildIndex(): void {
   lastIndexVersion = getIndexVersion();
 }
 
-/** Ensure index is fresh — call before any search. */
 function ensureFreshIndex(): void {
   if (!contentCache) return;
-  const currentVersion = getIndexVersion();
-  if (currentVersion !== lastIndexVersion) {
-    rebuildIndex();
-  }
+  try {
+    const currentVersion = getIndexVersion();
+    if (currentVersion !== lastIndexVersion) rebuildIndex();
+  } catch {}
 }
 
 export function search(query: string, limit = 10): SearchResult[] {
@@ -72,116 +67,85 @@ export function search(query: string, limit = 10): SearchResult[] {
 }
 
 /**
- * Smart FAQ match — multi-strategy matching for chatbot.
- * 1. Exact title match
- * 2. Keyword match against title + excerpt + tags
- * 3. Fuse.js fuzzy with generous threshold
+ * Smart FAQ match for chatbot — returns best matching FAQ.
+ *
+ * Strategy order:
+ * 1. Exact title match (highest confidence)
+ * 2. Title contains all keywords (high confidence)
+ * 3. Fuse.js best result (medium confidence — uses all fields with proper weighting)
+ *
+ * Key fix: never match on body content alone — prevents false positives
+ * when a keyword appears in an unrelated FAQ's long answer text.
  */
 export function exactFaqMatch(query: string): ContentItem | null {
   ensureFreshIndex();
-  if (!contentCache) return null;
+  if (!contentCache || !fuseInstance) return null;
 
   const normalized = query.toLowerCase().trim()
-    .replace(/^[¿?]+/, '').replace(/[?]+$/, '').trim();
+    .replace(/^[¿?¡!]+/, '').replace(/[?!]+$/, '').trim();
 
   // Strategy 1: Exact title match
-  const exact = contentCache.find((item) =>
-    item.title.toLowerCase().replace(/^[¿?]+/, '').replace(/[?]+$/, '').trim() === normalized,
-  );
-  if (exact) return exact;
+  for (const item of contentCache) {
+    const titleNorm = item.title.toLowerCase().replace(/^[¿?¡!]+/, '').replace(/[?!]+$/, '').trim();
+    if (titleNorm === normalized) return item;
+  }
 
-  // Strategy 2: Keyword scoring against title + excerpt + tags
+  // Extract meaningful keywords
   const keywords = normalized.split(/\s+/)
     .filter((w) => w.length > 2 && !STOPWORDS.has(w));
 
-  if (keywords.length >= 1) {
+  if (keywords.length === 0) return null;
+
+  // Strategy 2: Title-priority keyword scoring (for multi-word queries)
+  if (keywords.length >= 2) {
     let bestMatch: ContentItem | null = null;
     let bestScore = 0;
 
     for (const item of contentCache) {
-      const searchable = [
-        item.title.toLowerCase(),
-        (item.excerpt || '').toLowerCase(),
-        item.tags.join(' ').toLowerCase(),
-      ].join(' ');
+      const title = item.title.toLowerCase();
+      const tags = item.tags.join(' ').toLowerCase();
 
+      // Title matches worth 3x, tag matches worth 2x
       let score = 0;
       for (const kw of keywords) {
-        if (searchable.includes(kw)) score += 1;
+        if (title.includes(kw)) score += 3;
+        else if (tags.includes(kw)) score += 2;
       }
 
-      // Normalize to 0-1
-      const normalizedScore = score / keywords.length;
+      const maxPossible = keywords.length * 3;
+      const pct = score / maxPossible;
 
-      if (normalizedScore > 0.5 && normalizedScore > bestScore) {
-        bestScore = normalizedScore;
+      if (pct > bestScore && pct >= 0.4) {
+        bestScore = pct;
         bestMatch = item;
       }
     }
 
-    if (bestMatch && bestScore >= 0.6) return bestMatch;
+    if (bestMatch && bestScore >= 0.5) return bestMatch;
   }
 
-  // Strategy 3: Fuse.js top result if very good score
-  if (fuseInstance) {
-    const fuseResults = fuseInstance.search(normalized, { limit: 1 });
-    if (fuseResults.length > 0 && (fuseResults[0].score ?? 1) < 0.3) {
-      return fuseResults[0].item;
-    }
+  // Strategy 3: Fuse.js — works well for both single words and phrases
+  // because it uses weighted field matching (title 45%, excerpt 25%, tags 20%)
+  const fuseResults = fuseInstance.search(normalized, { limit: 1 });
+  if (fuseResults.length > 0 && (fuseResults[0].score ?? 1) < 0.35) {
+    return fuseResults[0].item;
   }
 
   return null;
 }
 
 /**
- * Retrieve content relevant to a query — for RAG context.
- * More generous than exactFaqMatch — returns multiple items.
+ * Retrieve relevant content for RAG context.
+ * Uses Fuse.js primarily (better ranking than keyword scoring for retrieval).
  */
 export function retrieveForRAG(query: string, limit = 5): ContentItem[] {
   ensureFreshIndex();
-  if (!contentCache) return [];
+  if (!fuseInstance || !contentCache) return [];
 
-  // First try keyword-based retrieval
-  const normalized = query.toLowerCase().trim()
-    .replace(/^[¿?]+/, '').replace(/[?]+$/, '').trim();
-
-  const keywords = normalized.split(/\s+/)
-    .filter((w) => w.length > 2 && !STOPWORDS.has(w));
-
-  if (keywords.length >= 1) {
-    const scored = contentCache.map((item) => {
-      const searchable = [
-        item.title.toLowerCase(),
-        (item.excerpt || '').toLowerCase(),
-        item.tags.join(' ').toLowerCase(),
-        item.content.toLowerCase().slice(0, 500),
-      ].join(' ');
-
-      let score = 0;
-      for (const kw of keywords) {
-        if (searchable.includes(kw)) score += 1;
-      }
-      return { item, score: score / keywords.length };
-    });
-
-    const matches = scored
-      .filter((s) => s.score > 0.3)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, limit)
-      .map((s) => s.item);
-
-    if (matches.length > 0) return matches;
-  }
-
-  // Fallback to Fuse.js
-  if (fuseInstance) {
-    const results = fuseInstance.search(query, { limit });
-    return results
-      .filter((r) => (r.score ?? 1) < 0.7)
-      .map((r) => r.item);
-  }
-
-  return [];
+  const results = fuseInstance.search(query, { limit });
+  return results
+    .filter((r) => (r.score ?? 1) < 0.65)
+    .map((r) => r.item);
 }
 
 function stripContent(item: ContentItem): ContentMeta {
