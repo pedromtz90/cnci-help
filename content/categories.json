@@ -1,0 +1,58 @@
+[
+  {
+    "id": "plataformas",
+    "name": "Plataformas y Accesos",
+    "icon": "Monitor",
+    "description": "Blackboard, Office 365, Biblioteca Virtual y herramientas digitales",
+    "order": 1
+  },
+  {
+    "id": "pagos",
+    "name": "Pagos y Becas",
+    "icon": "CreditCard",
+    "description": "Métodos de pago, facturación, becas y descuentos",
+    "order": 2
+  },
+  {
+    "id": "inscripcion",
+    "name": "Inscripción y Registro",
+    "icon": "UserPlus",
+    "description": "Proceso de inscripción, requisitos, cambios y bajas",
+    "order": 3
+  },
+  {
+    "id": "tramites",
+    "name": "Trámites y Constancias",
+    "icon": "FileText",
+    "description": "Constancias, certificados, credenciales y documentos oficiales",
+    "order": 4
+  },
+  {
+    "id": "titulacion",
+    "name": "Titulación",
+    "icon": "GraduationCap",
+    "description": "Requisitos de titulación, proceso y documentos necesarios",
+    "order": 5
+  },
+  {
+    "id": "soporte",
+    "name": "Soporte Técnico",
+    "icon": "Headphones",
+    "description": "Problemas técnicos, accesos bloqueados y errores de plataforma",
+    "order": 6
+  },
+  {
+    "id": "academico",
+    "name": "Vida Académica",
+    "icon": "BookOpen",
+    "description": "Materias, horarios, calificaciones, historial académico",
+    "order": 7
+  },
+  {
+    "id": "contacto",
+    "name": "Contacto y Directorio",
+    "icon": "Phone",
+    "description": "Departamentos, áreas de atención y canales de comunicación",
+    "order": 8
+  }
+]

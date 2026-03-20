@@ -1,0 +1,21 @@
+services:
+  cnci-help:
+    build: .
+    container_name: cnci-help
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3050:3000"
+    volumes:
+      - cnci-data:/app/data
+    env_file:
+      - .env.local
+    environment:
+      - NODE_ENV=production
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  cnci-data:
