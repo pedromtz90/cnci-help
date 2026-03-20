@@ -190,6 +190,14 @@ export function exactFaqMatch(query: string): ContentItem | null {
 
   const norm = normalize(query);
 
+  // Strategy 0: Query aliases — common student phrases mapped to correct topics
+  const aliasMatch = matchAlias(norm);
+  if (aliasMatch) {
+    for (const doc of indexedDocs) {
+      if (doc.titleRaw.includes(aliasMatch)) return doc.item;
+    }
+  }
+
   // Strategy 1: Exact title match
   for (const doc of indexedDocs) {
     if (doc.titleRaw === norm) return doc.item;
@@ -251,4 +259,48 @@ export function retrieveForRAG(query: string, limit = 5): ContentItem[] {
 function stripContent(item: ContentItem): ContentMeta {
   const { content, htmlContent, ...meta } = item;
   return meta;
+}
+
+/**
+ * Query aliases — maps common student phrases to the right FAQ title keyword.
+ * This handles cases where TF-IDF fails due to word ambiguity.
+ */
+const QUERY_ALIASES: Array<{ patterns: RegExp; titleHint: string }> = [
+  // Acceso a plataformas
+  { patterns: /como entro|como ingreso|como accedo|no puedo entrar|como inicio sesion/, titleHint: 'como accedo a blackboard' },
+  { patterns: /no me acuerdo.*(usuario|contrasena|clave|password)|olvide mi (usuario|contrasena|clave)/, titleHint: 'como restablezco mi contrasena' },
+  { patterns: /como entro a office|como uso office/, titleHint: 'como accedo a office' },
+
+  // Pagos
+  { patterns: /como pago|donde pago|metodo.*(pago|pagar)|formas? de pago/, titleHint: 'metodos de pago' },
+  { patterns: /me cobraron.*(doble|mas|extra)|cobro.*(doble|duplicado)|pague.*doble/, titleHint: 'pago' },
+  { patterns: /cuando.*(pago|pagar|fecha.*pago|limite.*pago)/, titleHint: 'fecha limite de pago' },
+
+  // Horarios
+  { patterns: /a que hora.*(llam|atiend|abren|contact)|horario.*(atencion|oficina|servicio)/, titleHint: 'horarios de atencion' },
+
+  // Inscripción
+  { patterns: /quiero (inscribirme|entrar|estudiar)|como me inscribo|requisitos.*inscripcion/, titleHint: 'como me inscribo' },
+
+  // Enviar tarea
+  { patterns: /como (envio|subo|entrego|mando).*tarea/, titleHint: 'como envio una tarea' },
+
+  // Tutor/asesor
+  { patterns: /mi tutor no (contesta|responde|califica)/, titleHint: 'mi tutor no' },
+  { patterns: /donde.*(tutor|localizo.*tutor)/, titleHint: 'localizo a mi tutor' },
+
+  // Facturación
+  { patterns: /como facturo|quiero factura|necesito factura|datos.*factur/, titleHint: 'factura' },
+
+  // Becas
+  { patterns: /que becas|como.*beca|solicito.*beca|pido.*beca/, titleHint: 'beca' },
+];
+
+function matchAlias(normalizedQuery: string): string | null {
+  for (const alias of QUERY_ALIASES) {
+    if (alias.patterns.test(normalizedQuery)) {
+      return normalize(alias.titleHint);
+    }
+  }
+  return null;
 }
