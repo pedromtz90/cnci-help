@@ -105,10 +105,10 @@ function triggerWorkflows(req: ChatRequest): void {
 }
 
 function buildFaqResponse(faq: ContentItem, start: number): ChatResponse {
-  // Always use full content (up to 600 chars) — excerpts are often truncated
+  // Use full content — most CNCI FAQs are under 1000 chars, send complete
   const stripped = stripMdx(faq.content);
-  const content = stripped.length > 600
-    ? stripped.slice(0, 600).replace(/\s+\S*$/, '') + '...'
+  const content = stripped.length > 1500
+    ? stripped.slice(0, 1500).replace(/\s+\S*$/, '') + '\n\nPuedes ver el artículo completo para más detalles.'
     : stripped;
 
   return {
@@ -132,8 +132,8 @@ function buildFaqResponse(faq: ContentItem, start: number): ChatResponse {
 function buildRetrievalResponse(items: ContentItem[], start: number): ChatResponse {
   const best = items[0];
   const stripped = stripMdx(best.content);
-  const content = stripped.length > 600
-    ? stripped.slice(0, 600).replace(/\s+\S*$/, '') + '...'
+  const content = stripped.length > 1500
+    ? stripped.slice(0, 1500).replace(/\s+\S*$/, '') + '\n\nPuedes ver el artículo completo para más detalles.'
     : stripped;
 
   const related = items.slice(1).map((item) => ({
