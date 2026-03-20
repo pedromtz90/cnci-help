@@ -4,6 +4,7 @@ import { createTicket, getTickets, getTicketsByStudent, getTicketByFolio } from 
 import { trackEvent } from '@/lib/analytics/service';
 import { syncTicketToNexus } from '@/lib/nexus/sync';
 import { getDb } from '@/lib/db/database';
+import { requireAuth, AuthError } from '@/lib/auth/session';
 
 const CreateTicketSchema = z.object({
   studentName: z.string().min(2).max(200),
@@ -59,10 +60,17 @@ export async function GET(req: NextRequest) {
   const status = req.nextUrl.searchParams.get('status') as any;
   const category = req.nextUrl.searchParams.get('category') || undefined;
 
+  // Folio lookup is public (student needs this to track their ticket)
   if (folio) {
     const ticket = getTicketByFolio(folio);
     if (!ticket) return NextResponse.json({ error: 'Ticket no encontrado.' }, { status: 404 });
     return NextResponse.json({ ticket });
+  }
+
+  // All other queries require authentication (protects PII)
+  try { await requireAuth(); } catch (e) {
+    if (e instanceof AuthError) return NextResponse.json({ error: e.message }, { status: e.status });
+    return NextResponse.json({ error: 'Inicia sesión para ver tickets.' }, { status: 401 });
   }
 
   if (studentId) {

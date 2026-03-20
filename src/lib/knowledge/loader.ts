@@ -6,14 +6,23 @@ import type { ContentItem, ContentMeta, Category } from '@/types/content';
 
 const CONTENT_DIR = path.join(process.cwd(), 'content');
 
+// ── In-memory cache (avoids reading 481 files from disk on every call) ──
+let cachedContent: ContentItem[] | null = null;
+let cacheTime = 0;
+const CACHE_TTL = 5 * 60_000; // 5 minutes
+
 /**
- * Load all content items from MDX files.
+ * Load all content items from MDX files (cached).
  */
 export async function loadAllContent(): Promise<ContentItem[]> {
+  if (cachedContent && Date.now() - cacheTime < CACHE_TTL) {
+    return cachedContent;
+  }
+
   const pattern = path.join(CONTENT_DIR, '**/*.mdx').replace(/\\/g, '/');
   const files = await glob(pattern);
 
-  return files.map((filePath) => {
+  cachedContent = files.map((filePath) => {
     const raw = fs.readFileSync(filePath, 'utf-8');
     const { data, content } = matter(raw);
 
@@ -37,44 +46,32 @@ export async function loadAllContent(): Promise<ContentItem[]> {
       content,
     } satisfies ContentItem;
   });
+
+  cacheTime = Date.now();
+  return cachedContent;
 }
 
-/**
- * Load published content only.
- */
 export async function loadPublishedContent(): Promise<ContentItem[]> {
   const all = await loadAllContent();
   return all.filter((item) => item.visibility === 'published');
 }
 
-/**
- * Load categories from JSON.
- */
 export function loadCategories(): Category[] {
   const filePath = path.join(CONTENT_DIR, 'categories.json');
   const raw = fs.readFileSync(filePath, 'utf-8');
   return JSON.parse(raw) as Category[];
 }
 
-/**
- * Get content by slug.
- */
 export async function getContentBySlug(slug: string): Promise<ContentItem | null> {
   const all = await loadPublishedContent();
   return all.find((item) => item.slug === slug) || null;
 }
 
-/**
- * Get content by category.
- */
 export async function getContentByCategory(category: string): Promise<ContentItem[]> {
   const all = await loadPublishedContent();
   return all.filter((item) => item.category === category);
 }
 
-/**
- * Get all published metadata (without body content — for search index).
- */
 export async function loadContentMeta(): Promise<ContentMeta[]> {
   const all = await loadPublishedContent();
   return all.map(({ content, htmlContent, ...meta }) => meta);

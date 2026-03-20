@@ -49,9 +49,12 @@ export const authOptions: NextAuthOptions = {
       },
       async authorize(credentials) {
         if (!credentials?.email || !credentials?.password) return null;
+        const adminEmail = process.env.ADMIN_EMAIL;
+        const adminPassword = process.env.ADMIN_PASSWORD;
+        if (!adminEmail || !adminPassword) return null; // Credentials auth disabled without env vars
         if (
-          credentials.email === (process.env.ADMIN_EMAIL || 'admin@cncivirtual.mx') &&
-          credentials.password === (process.env.ADMIN_PASSWORD || 'cnci2026admin')
+          credentials.email === adminEmail &&
+          credentials.password === adminPassword
         ) {
           return { id: 'admin-local', name: 'Administrador CNCI', email: credentials.email };
         }

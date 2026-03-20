@@ -26,9 +26,21 @@ export async function POST(req: NextRequest) {
   }
   getDb();
   const body = await req.json();
+
+  // Whitelist allowed settings keys
+  const ALLOWED_KEYS = new Set([
+    'azure_ad_client_id', 'azure_ad_client_secret', 'azure_ad_tenant_id',
+    'smtp_host', 'smtp_port', 'smtp_user', 'smtp_pass', 'smtp_from',
+    'nexus_api_url', 'nexus_api_key', 'nexus_email', 'nexus_password', 'nexus_channel_id',
+    'ai_api_key', 'ai_model',
+    'staff_emails', 'director_emails',
+    'institution_name', 'support_phone',
+    'department_emails', 'chatbot_prompt',
+  ]);
+
   const clean: Record<string, string> = {};
   for (const [key, value] of Object.entries(body)) {
-    if (typeof value === 'string' && value !== '••••••••') {
+    if (typeof value === 'string' && value !== '••••••••' && ALLOWED_KEYS.has(key)) {
       clean[key] = value;
     }
   }

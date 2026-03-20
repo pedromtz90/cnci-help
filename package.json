@@ -11,14 +11,12 @@
     "kb:validate": "tsx src/lib/knowledge/validate.ts"
   },
   "dependencies": {
-    "@mastra/core": "^1.15.0",
     "better-sqlite3": "^11.7.0",
     "clsx": "^2.1.1",
     "gray-matter": "^4.0.3",
     "lucide-react": "^0.468.0",
     "next": "^14.2.21",
     "next-auth": "^4.24.13",
-    "next-mdx-remote": "^5.0.0",
     "nodemailer": "^8.0.3",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",

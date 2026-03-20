@@ -71,7 +71,7 @@ export function Navbar() {
         </div>
 
         {/* Mobile */}
-        <button onClick={() => setMobileOpen(!mobileOpen)} className="md:hidden text-slate-600 p-2">
+        <button onClick={() => setMobileOpen(!mobileOpen)} className="md:hidden text-slate-600 p-2" aria-label="Menú" aria-expanded={mobileOpen}>
           {mobileOpen ? <X size={24} /> : <Menu size={24} />}
         </button>
       </div>
