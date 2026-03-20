@@ -154,6 +154,36 @@ export default function SettingsPage() {
             </div>
           </Section>
 
+          {/* ── Chatbot Prompt ── */}
+          <Section icon={Brain} title="Personalidad del Chatbot" description="El prompt define cómo responde el chatbot — su tono, reglas y personalidad" color="purple">
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-500 mb-1.5">System Prompt</label>
+                <textarea
+                  value={settings.chatbot_prompt || ''}
+                  onChange={(e) => update('chatbot_prompt', e.target.value)}
+                  className="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-purple-200 focus:border-purple-400 min-h-[250px] resize-y font-mono text-xs leading-relaxed"
+                  placeholder="Eres un Ejecutivo de Servicios Estudiantiles..."
+                />
+                <p className="text-[10px] text-slate-400 mt-1">
+                  Este texto le dice al chatbot quién es, cómo debe responder y qué reglas seguir.
+                  Se usa cuando el chatbot necesita generar respuestas con IA.
+                  Puedes editarlo para cambiar el tono, agregar reglas o ajustar el comportamiento.
+                </p>
+              </div>
+              <div className="bg-purple-50 p-3 rounded-xl">
+                <p className="text-xs text-purple-700 font-medium mb-2">Tips para un buen prompt:</p>
+                <ul className="text-[11px] text-purple-600 space-y-1 list-disc pl-4">
+                  <li>Define quién es el chatbot (ej. "Eres un ejecutivo de servicios estudiantiles")</li>
+                  <li>Indica el tono (profesional, amable, cercano)</li>
+                  <li>Pon reglas claras (no inventar info, citar fuentes, sugerir tickets)</li>
+                  <li>Indica que responda paso a paso cuando sea necesario</li>
+                  <li>Pide que sugiera escalación si no puede resolver</li>
+                </ul>
+              </div>
+            </div>
+          </Section>
+
           {/* ── Branding ── */}
           <Section icon={Building2} title="Datos de la Institución" description="Nombre y teléfono que aparecen en la plataforma" color="slate">
             <div className="space-y-4">

@@ -5,37 +5,17 @@ import { flowPaymentQuestion, flowEnrollmentIntent, flowLowConfidence } from '@/
 import { getDepartmentEmail, getConfig } from '@/lib/settings/service';
 import { recordGap } from '@/lib/knowledge/gaps';
 
-const SYSTEM_PROMPT = `Eres un Ejecutivo de Servicios Estudiantiles de la Universidad Virtual CNCI.
-
-IDENTIDAD:
-- Eres parte del equipo de Servicios Estudiantiles
-- Conoces los procesos académicos y administrativos de CNCI
-- Representas a la institución
-- Tu tono es profesional, cercano y humano
-
-FORMA DE RESPONDER:
-- Responde en español, de forma clara y directa
-- Usa lenguaje sencillo, evita tecnicismos
-- Explica paso a paso cuando sea necesario
-- Da soluciones, no solo información
-- Anticipa dudas comunes
-- Mantén un tono amable y empático
-- NO suenes como IA o sistema automatizado
-- Máximo 3 párrafos
-
-REGLAS:
-- Basa tus respuestas EXCLUSIVAMENTE en el contexto proporcionado
-- NUNCA inventes información sobre trámites, fechas, costos o requisitos
-- Si no tienes la respuesta, dilo claramente y ofrece alternativas
-- Sugiere crear ticket o contactar al área correcta si no puedes resolver
-
-EJEMPLO DE BUEN TONO:
-"Para entrar a Blackboard, usa tu usuario y contraseña institucional. Si no recuerdas tu contraseña, puedo ayudarte a recuperarla paso a paso."
-
-NO HAGAS:
-"Debes acceder al sistema LMS con tus credenciales institucionales."`;
-
-// Department emails now come from settings (configurable via admin panel)
+/** System prompt — loaded from settings DB so staff can edit it from /admin/settings */
+function getSystemPrompt(): string {
+  try {
+    const custom = getConfig('chatbot_prompt');
+    if (custom && custom.length > 20) return custom;
+  } catch {}
+  return `Eres un Ejecutivo de Servicios Estudiantiles de la Universidad Virtual CNCI.
+Responde en español, de forma clara, directa y amable.
+Basa tus respuestas EXCLUSIVAMENTE en el contexto proporcionado.
+NUNCA inventes información. Si no sabes, dilo y sugiere contactar al área correcta.`;
+}
 
 /**
  * Main chat processing pipeline.
@@ -180,7 +160,7 @@ async function buildLLMResponse(
       body: JSON.stringify({
         model: process.env.AI_MODEL || 'claude-haiku-4-5-20251001',
         max_tokens: 512,
-        system: `${SYSTEM_PROMPT}\n\nCONTEXTO DISPONIBLE:\n${contextText}`,
+        system: `${getSystemPrompt()}\n\nCONTEXTO DISPONIBLE:\n${contextText}`,
         messages: [
           ...(req.history || []).slice(-6).map((h) => ({
             role: h.role,
