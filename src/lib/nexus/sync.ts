@@ -42,23 +42,23 @@ export async function escalateToNexus(params: {
   channel?: string;
 }): Promise<NexusSyncResult> {
   const nexusUrl = getConfig('nexus_api_url') || process.env.NEXUS_API_URL;
-  const nexusKey = getConfig('nexus_api_key') || process.env.NEXUS_API_KEY;
+  const nexusPass = getConfig('nexus_password') || process.env.NEXUS_PASSWORD;
 
-  if (!nexusUrl || !nexusKey) {
+  if (!nexusUrl || !nexusPass) {
     console.log('[nexus] Not configured — skipping escalation');
     return { success: false, error: 'Nexus not configured' };
   }
 
   try {
     // Step 1: Find or create contact
-    const contactId = await findOrCreateContact(nexusUrl, nexusKey, params);
+    const contactId = await findOrCreateContact(nexusUrl, "", params);
 
     // Step 2: Create conversation with HUMAN_REQUIRED mode
-    const conversationId = await createConversation(nexusUrl, nexusKey, contactId, params);
+    const conversationId = await createConversation(nexusUrl, "", contactId, params);
 
     // Step 3: Add chat history as messages
     if (params.chatHistory.length > 0) {
-      await addChatHistory(nexusUrl, nexusKey, conversationId, params.chatHistory);
+      await addChatHistory(nexusUrl, "", conversationId, params.chatHistory);
     }
 
     console.log(`[nexus] Escalated: contact=${contactId} conversation=${conversationId}`);
@@ -91,11 +91,11 @@ export async function syncTicketToNexus(ticket: Ticket): Promise<NexusSyncResult
  */
 export async function updateNexusCase(conversationId: string, status: string): Promise<void> {
   const nexusUrl = getConfig('nexus_api_url') || process.env.NEXUS_API_URL;
-  const nexusKey = getConfig('nexus_api_key') || process.env.NEXUS_API_KEY;
-  if (!nexusUrl || !nexusKey) return;
+  const nexusPass = getConfig('nexus_password') || process.env.NEXUS_PASSWORD;
+  if (!nexusUrl || !nexusPass) return;
 
   try {
-    await nexusFetch(nexusUrl, nexusKey, `/api/v1/conversations/${conversationId}`, {
+    await nexusFetch(nexusUrl, "", `/api/v1/conversations/${conversationId}`, {
       method: 'PATCH',
       body: JSON.stringify({
         status: status === 'resolved' || status === 'closed' ? 'RESOLVED' : 'OPEN',
