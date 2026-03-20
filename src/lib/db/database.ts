@@ -114,6 +114,25 @@ function initSchema(db: Database.Database) {
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
+    -- Unanswered questions (chatbot gaps — for training)
+    CREATE TABLE IF NOT EXISTS unanswered (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      query TEXT NOT NULL,
+      confidence TEXT NOT NULL DEFAULT 'low',
+      source TEXT NOT NULL DEFAULT 'fallback',
+      matched_faq TEXT,
+      times_asked INTEGER NOT NULL DEFAULT 1,
+      status TEXT NOT NULL DEFAULT 'pending',
+      resolved_by TEXT,
+      resolved_answer TEXT,
+      knowledge_item_id INTEGER,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_unanswered_status ON unanswered(status);
+    CREATE INDEX IF NOT EXISTS idx_unanswered_times ON unanswered(times_asked DESC);
+
     -- Audit log (tracks all admin changes)
     CREATE TABLE IF NOT EXISTS audit_log (
       id INTEGER PRIMARY KEY AUTOINCREMENT,

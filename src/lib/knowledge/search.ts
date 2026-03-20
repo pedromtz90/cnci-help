@@ -138,14 +138,27 @@ export function exactFaqMatch(query: string): ContentItem | null {
   }
 
   // Strategy 3: Fuse.js — try both original query and accent-stripped version
-  const fuseResults = fuseInstance.search(normalized, { limit: 3 });
+  const fuseResults = fuseInstance.search(normalized, { limit: 5 });
   const fuseResultsNoAccent = normNoAccent !== normalized
-    ? fuseInstance.search(normNoAccent, { limit: 3 })
+    ? fuseInstance.search(normNoAccent, { limit: 5 })
     : [];
 
-  // Merge and pick best
-  const allFuse = [...fuseResults, ...fuseResultsNoAccent].sort((a, b) => (a.score ?? 1) - (b.score ?? 1));
-  if (allFuse.length > 0 && (allFuse[0].score ?? 1) < 0.75) {
+  // Merge, deduplicate, and re-rank: boost results whose title contains query keywords
+  const seen = new Set<string>();
+  const allFuse = [...fuseResults, ...fuseResultsNoAccent]
+    .filter((r) => { const k = r.item.id; if (seen.has(k)) return false; seen.add(k); return true; })
+    .map((r) => {
+      const titleLower = noAccent(r.item.title.toLowerCase());
+      // Boost score if title directly contains query keywords
+      let boost = 0;
+      for (const kw of keywords) {
+        if (titleLower.includes(noAccent(kw))) boost += 0.15;
+      }
+      return { ...r, adjustedScore: (r.score ?? 1) - boost };
+    })
+    .sort((a, b) => a.adjustedScore - b.adjustedScore);
+
+  if (allFuse.length > 0 && allFuse[0].adjustedScore < 0.75) {
     return allFuse[0].item;
   }
 

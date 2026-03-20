@@ -3,6 +3,7 @@ import { exactFaqMatch, retrieveForRAG } from '@/lib/knowledge/search';
 import { trackEvent } from '@/lib/analytics/service';
 import { flowPaymentQuestion, flowEnrollmentIntent, flowLowConfidence } from '@/lib/workflows/flows';
 import { getDepartmentEmail, getConfig } from '@/lib/settings/service';
+import { recordGap } from '@/lib/knowledge/gaps';
 
 const SYSTEM_PROMPT = `Eres el Asistente Virtual de Servicios Estudiantiles de la Universidad Virtual CNCI.
 
@@ -52,7 +53,10 @@ export async function processChat(req: ChatRequest): Promise<ChatResponse> {
   // ── Gate 4: Fallback — offer ticket creation ──
   trackEvent({ type: 'chat', query: req.message, confidence: 'low', source: 'fallback', resolved: false });
 
-  // ── Workflow triggers (non-blocking) ──
+  // Record as knowledge gap for training
+  recordGap(req.message, 'low', 'fallback');
+
+  // Workflow triggers (non-blocking)
   triggerWorkflows(req);
 
   return buildFallbackResponse(req.message, start);
