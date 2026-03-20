@@ -108,28 +108,24 @@ export async function updateNexusCase(conversationId: string, status: string): P
 
 // ── Internal ────────────────────────────────────────────────────────
 
-async function findOrCreateContact(url: string, key: string, params: any): Promise<string> {
+async function findOrCreateContact(url: string, _key: string, params: any): Promise<string> {
   // Search by email
-  const searchRes = await nexusFetch(url, key, `/api/v1/contacts?email=${encodeURIComponent(params.studentEmail)}`);
+  const searchRes = await nexusFetch(url, '', `/api/v1/contacts?search=${encodeURIComponent(params.studentEmail)}`);
   const searchData = await searchRes.json();
 
-  if (searchData.data?.length > 0) {
-    return searchData.data[0].id;
+  const items = searchData.data?.items || searchData.data || [];
+  if (Array.isArray(items) && items.length > 0) {
+    return items[0].id;
   }
 
   // Create new
-  const createRes = await nexusFetch(url, key, '/api/v1/contacts', {
+  const createRes = await nexusFetch(url, '', '/api/v1/contacts', {
     method: 'POST',
     body: JSON.stringify({
       firstName: params.studentName.split(' ')[0],
       lastName: params.studentName.split(' ').slice(1).join(' ') || '',
       email: params.studentEmail,
       phone: params.phone || '',
-      source: 'cnci-help',
-      tags: ['alumno-cnci', params.category],
-      customFields: {
-        matricula: params.studentId || '',
-      },
     }),
   });
 
