@@ -16,38 +16,31 @@ export function HeroSearch() {
   }, [query, router]);
 
   return (
-    <section className="bg-cnci-navy hero-texture">
-      <div className="max-w-3xl mx-auto px-4 sm:px-6 pt-16 pb-20 text-center">
-        <h2 className="text-white text-2xl sm:text-3xl font-bold tracking-tight leading-snug">
-          ¿En qué podemos ayudarte?
-        </h2>
-        <p className="text-blue-200/60 mt-2 text-sm max-w-md mx-auto">
-          Busca respuestas sobre plataformas, trámites, pagos, titulación y más.
+    <section className="hero-gradient text-white py-16 md:py-24 px-6 relative overflow-hidden">
+      <div className="max-w-4xl mx-auto text-center relative z-10">
+        <h1 className="text-3xl md:text-5xl font-extrabold mb-4">
+          ¿Cómo podemos ayudarte?
+        </h1>
+        <p className="text-blue-100 text-base md:text-lg mb-10 opacity-90 font-light px-4">
+          Busca tutoriales, procesos de titulación, becas y más.
         </p>
 
-        <form onSubmit={handleSubmit} className="relative mt-8 max-w-lg mx-auto">
-          <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+        <form onSubmit={handleSubmit} className="max-w-2xl mx-auto relative px-2">
+          <Search size={20} className="absolute left-8 top-1/2 -translate-y-1/2 text-slate-400" />
           <input
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Escribe tu pregunta..."
+            placeholder="Escribe tu pregunta aquí..."
             aria-label="Buscar"
-            className="w-full pl-11 pr-4 py-3.5 rounded-lg text-sm text-slate-800 bg-white shadow-lg focus:outline-none focus:ring-2 focus:ring-white/30 placeholder-slate-400 border-0"
+            className="w-full pl-14 pr-6 py-5 rounded-2xl border-0 shadow-2xl focus:ring-4 focus:ring-blue-400/30 outline-none text-gray-800 text-base transition-all"
           />
         </form>
-
-        <div className="flex flex-wrap justify-center gap-2 mt-4">
-          {['Blackboard', 'Pagos', 'Constancias', 'Contraseña', 'Titulación'].map((tag) => (
-            <button
-              key={tag}
-              onClick={() => { setQuery(tag); router.push(`/help?q=${encodeURIComponent(tag)}`); }}
-              className="text-[11px] text-blue-200/50 hover:text-blue-100 bg-white/[0.06] hover:bg-white/[0.1] px-2.5 py-1 rounded-md transition-colors"
-            >
-              {tag}
-            </button>
-          ))}
-        </div>
+      </div>
+      {/* Subtle background decoration */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none">
+        <div className="absolute -top-32 -right-32 w-80 h-80 bg-white/[0.03] rounded-full" />
+        <div className="absolute -bottom-40 -left-20 w-96 h-96 bg-white/[0.02] rounded-full" />
       </div>
     </section>
   );

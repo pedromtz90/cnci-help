@@ -1,66 +1,73 @@
 'use client';
 
 import { useState } from 'react';
-import { ChevronRight, ArrowRight } from 'lucide-react';
+import { ChevronDown, ExternalLink, ArrowRight } from 'lucide-react';
 import Link from 'next/link';
 import type { ContentMeta } from '@/types/content';
 
-interface FaqCardProps {
-  faq: ContentMeta;
-}
-
-export function FaqCard({ faq }: FaqCardProps) {
+export function FaqCard({ faq }: { faq: ContentMeta }) {
   const [open, setOpen] = useState(false);
 
   return (
-    <div className={`border-b border-slate-100 last:border-0 ${open ? 'pb-4' : ''}`}>
+    <article className={`bg-white rounded-3xl border overflow-hidden transition-all duration-300 ${
+      open
+        ? 'border-blue-200 shadow-lg'
+        : 'border-slate-100 shadow-premium hover:-translate-y-0.5 hover:shadow-lg'
+    }`}>
       <button
         onClick={() => setOpen(!open)}
-        className="w-full text-left py-3.5 flex justify-between items-start gap-3 group"
+        className="w-full text-left p-6 md:p-8 flex justify-between items-center group"
         aria-expanded={open}
       >
-        <span className={`text-[14px] leading-relaxed transition-colors ${
-          open ? 'text-cnci-navy font-medium' : 'text-slate-700 group-hover:text-slate-900'
+        <h3 className={`font-bold text-sm md:text-base pr-4 transition-colors leading-snug ${
+          open ? 'text-blue-600' : 'text-slate-800 group-hover:text-blue-600'
         }`}>
           {faq.title}
-        </span>
-        <ChevronRight
-          size={15}
-          className={`mt-0.5 shrink-0 transition-transform text-slate-400 ${
-            open ? 'rotate-90 text-cnci-navy' : 'group-hover:text-slate-600'
+        </h3>
+        <ChevronDown
+          size={18}
+          className={`shrink-0 transition-transform duration-300 ${
+            open ? 'rotate-180 text-blue-600' : 'text-slate-300 group-hover:text-blue-500'
           }`}
         />
       </button>
 
       {open && (
-        <div className="pl-0 pb-1 animate-fade-up">
+        <div className="px-6 md:px-8 pb-6 md:pb-8 animate-fade-up">
           {faq.excerpt && (
-            <p className="text-slate-500 text-[13px] leading-relaxed mb-3">{faq.excerpt}</p>
+            <p className="text-slate-600 text-sm leading-relaxed mb-4">{faq.excerpt}</p>
           )}
-          <div className="flex flex-wrap items-center gap-2">
+
+          <div className="flex flex-wrap items-center gap-2 mt-2">
             <Link
               href={`/help/${faq.category}/${faq.slug}`}
-              className="text-[12px] font-medium text-cnci-navy hover:text-cnci-dark flex items-center gap-1 transition-colors"
+              className="inline-flex items-center gap-1.5 text-sm font-semibold text-blue-600 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 px-4 py-2 rounded-xl transition-all"
             >
-              Leer más <ArrowRight size={11} />
+              Ver artículo completo <ArrowRight size={14} />
             </Link>
+
             {faq.suggestedActions?.slice(0, 2).map((action, i) => (
               <a
                 key={i}
                 href={action.href || '#'}
                 target={action.href?.startsWith('http') ? '_blank' : undefined}
                 rel={action.href?.startsWith('http') ? 'noopener noreferrer' : undefined}
-                className="text-[11px] text-slate-500 hover:text-cnci-navy bg-slate-50 hover:bg-slate-100 px-2 py-1 rounded transition-colors"
+                className="inline-flex items-center gap-1 text-xs font-bold text-slate-500 bg-slate-50 hover:bg-slate-100 px-3 py-2 rounded-xl transition-colors"
               >
-                {action.label}
+                <ExternalLink size={11} /> {action.label}
               </a>
             ))}
           </div>
+
           {faq.area && (
-            <span className="text-[10px] text-slate-300 mt-2 block">{faq.area}</span>
+            <div className="mt-4 pt-4 border-t border-slate-100">
+              <span className="text-[10px] font-black text-slate-300 uppercase tracking-widest">
+                Área: {faq.area}
+              </span>
+            </div>
           )}
         </div>
       )}
-    </div>
+    </article>
   );
 }

@@ -5,7 +5,7 @@ import { CategoryGrid } from '@/components/help/category-grid';
 import { FaqCard } from '@/components/help/faq-card';
 import { ChatWidget } from '@/components/chat/chat-widget';
 import { loadPublishedContent, loadCategories } from '@/lib/knowledge/loader';
-import { ArrowRight, BookOpen, Headphones, GraduationCap } from 'lucide-react';
+import { ArrowRight } from 'lucide-react';
 import Link from 'next/link';
 
 export default async function HomePage() {
@@ -18,84 +18,88 @@ export default async function HomePage() {
       const order = { critical: 0, high: 1, medium: 2, low: 3 };
       return order[a.priority] - order[b.priority];
     })
-    .slice(0, 10);
+    .slice(0, 8);
 
   return (
-    <div className="min-h-screen flex flex-col bg-white">
+    <div className="min-h-screen flex flex-col bg-slate-50">
       <Navbar />
+
       <main className="flex-grow">
         <HeroSearch />
 
-        <div className="max-w-5xl mx-auto px-4 sm:px-6">
-          {/* Quick links */}
-          <div className="-mt-6 relative z-10 mb-12">
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              {[
-                { icon: BookOpen, label: 'Guías y trámites', href: '/help/tramites', desc: 'Constancias, credenciales, documentos' },
-                { icon: Headphones, label: 'Soporte técnico', href: '/help/soporte', desc: 'Blackboard, Office 365, contraseñas' },
-                { icon: GraduationCap, label: 'Titulación', href: '/help/titulacion', desc: 'Requisitos, proceso, servicio social' },
-              ].map((item) => (
-                <Link key={item.href} href={item.href} className="flex items-center gap-3 bg-white border border-slate-200 rounded-lg px-4 py-3 hover:border-slate-300 hover:shadow-sm transition-all group">
-                  <div className="w-8 h-8 rounded-md bg-slate-100 text-slate-500 flex items-center justify-center shrink-0 group-hover:text-cnci-navy">
-                    <item.icon size={16} />
-                  </div>
-                  <div className="min-w-0">
-                    <span className="text-sm font-medium text-slate-800 block">{item.label}</span>
-                    <span className="text-[11px] text-slate-400">{item.desc}</span>
-                  </div>
-                </Link>
-              ))}
-            </div>
-          </div>
+        {/* Main content area — overlaps hero like Rolando's design */}
+        <div className="max-w-6xl mx-auto w-full px-4 -mt-16 relative z-10 pb-20">
 
-          {/* Categories */}
-          <section className="mb-14">
-            <h2 className="text-sm font-semibold text-slate-800 mb-4">Explorar por tema</h2>
+          {/* Categories carousel */}
+          <section className="mb-12">
             <CategoryGrid categories={categories} />
           </section>
 
           {/* Top FAQs */}
-          <section className="mb-14">
-            <div className="flex items-baseline justify-between mb-4">
-              <h2 className="text-sm font-semibold text-slate-800">Preguntas frecuentes</h2>
-              <Link href="/help/plataformas" className="text-[12px] text-slate-400 hover:text-cnci-navy flex items-center gap-1 transition-colors">
-                Ver todas <ArrowRight size={11} />
+          <section>
+            <div className="flex items-center justify-between mb-8">
+              <div>
+                <h2 className="text-2xl md:text-3xl font-extrabold text-slate-800 tracking-tight">
+                  Preguntas frecuentes
+                </h2>
+                <p className="text-slate-500 font-medium mt-1">
+                  Las dudas más comunes de nuestros alumnos
+                </p>
+              </div>
+              <Link href="/help/plataformas" className="hidden sm:flex items-center gap-1 text-sm font-semibold text-blue-600 hover:text-blue-700 transition-colors">
+                Ver todas <ArrowRight size={14} />
               </Link>
             </div>
-            <div className="bg-white border border-slate-200 rounded-lg divide-y divide-slate-100 px-5">
+
+            <div className="space-y-4">
               {topFaqs.map((faq) => (
                 <FaqCard key={faq.id} faq={faq} />
               ))}
             </div>
           </section>
 
-          {/* Directory */}
-          <section className="mb-16">
-            <h2 className="text-sm font-semibold text-slate-800 mb-4">Directorio de departamentos</h2>
-            <div className="border border-slate-200 rounded-lg overflow-hidden">
-              <img
-                src="/directorio-cnci.png"
-                alt="Directorio de Departamentos CNCI"
-                className="w-full h-auto"
-                loading="lazy"
-              />
+          {/* Directory section */}
+          <section className="mt-24 mb-10">
+            <div className="bg-white rounded-3xl shadow-premium border border-slate-100 p-8 md:p-12 text-center overflow-hidden relative">
+              <div className="absolute top-0 right-0 w-40 h-40 bg-blue-50/50 rounded-bl-full -z-0" />
+              <div className="absolute bottom-0 left-0 w-32 h-32 bg-slate-50 rounded-tr-full -z-0" />
+              <div className="relative z-10">
+                <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-blue-50 text-blue-600 mb-6 shadow-sm border border-blue-100">
+                  <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" />
+                  </svg>
+                </div>
+                <h2 className="text-3xl md:text-4xl font-extrabold text-slate-800 mb-4 tracking-tight">Directorio CNCI</h2>
+                <p className="text-slate-500 mb-10 max-w-2xl mx-auto font-medium text-lg">
+                  Encuentra rápidamente la información de contacto de nuestros departamentos.
+                </p>
+                <div className="rounded-2xl overflow-hidden border border-slate-200 shadow-lg bg-white">
+                  <img
+                    src="/directorio-cnci.png"
+                    alt="Directorio de Departamentos"
+                    className="w-full h-auto object-cover"
+                    loading="lazy"
+                  />
+                </div>
+              </div>
             </div>
           </section>
 
-          {/* Help CTA — simple, not a banner */}
-          <section className="mb-16 text-center py-10 border-t border-slate-100">
-            <p className="text-slate-500 text-sm mb-4">¿No encontraste lo que buscas?</p>
+          {/* CTA */}
+          <section className="text-center py-8">
+            <p className="text-slate-400 font-medium mb-4">¿No encontraste lo que buscas?</p>
             <div className="flex flex-col sm:flex-row gap-3 justify-center">
-              <Link href="/tickets" className="inline-flex items-center justify-center gap-2 text-sm font-medium bg-cnci-navy text-white px-5 py-2.5 rounded-lg hover:bg-cnci-dark transition-colors">
+              <Link href="/tickets" className="inline-flex items-center justify-center gap-2 bg-blue-600 text-white font-bold text-sm px-8 py-3.5 rounded-xl hover:bg-blue-700 transition-colors shadow-lg shadow-blue-600/20">
                 Crear solicitud de soporte
               </Link>
-              <a href="mailto:servicios@cncivirtual.mx" className="inline-flex items-center justify-center gap-2 text-sm font-medium text-slate-600 border border-slate-200 px-5 py-2.5 rounded-lg hover:bg-slate-50 transition-colors">
+              <a href="mailto:servicios@cncivirtual.mx" className="inline-flex items-center justify-center gap-2 text-slate-600 font-bold text-sm px-8 py-3.5 rounded-xl border border-slate-200 hover:bg-slate-50 transition-colors">
                 Escribir por correo
               </a>
             </div>
           </section>
         </div>
       </main>
+
       <Footer />
       <ChatWidget />
     </div>
