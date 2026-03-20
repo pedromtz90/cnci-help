@@ -38,20 +38,12 @@ function tokenize(text: string): string[] {
     .filter((w) => w.length > 1 && !STOPWORDS.has(w));
 }
 
-/** Basic Spanish stemmer — removes common suffixes */
+/** Light normalizer — only removes plurals. No aggressive stemming. */
 function stem(word: string): string {
-  if (word.length <= 4) return word;
-  // Remove plural
-  if (word.endsWith('es') && word.length > 4) return word.slice(0, -2);
-  if (word.endsWith('s') && !word.endsWith('ss')) return word.slice(0, -1);
-  // Remove common verb/noun endings
-  if (word.endsWith('cion') || word.endsWith('sion')) return word.slice(0, -4);
-  if (word.endsWith('ando') || word.endsWith('endo') || word.endsWith('iendo')) return word.slice(0, -4);
-  if (word.endsWith('mente')) return word.slice(0, -5);
-  if (word.endsWith('idad')) return word.slice(0, -4);
-  if (word.endsWith('izar')) return word.slice(0, -4);
-  if (word.endsWith('ado') || word.endsWith('ido')) return word.slice(0, -3);
-  if (word.endsWith('ar') || word.endsWith('er') || word.endsWith('ir')) return word.slice(0, -2);
+  if (word.length <= 3) return word;
+  // Only remove simple plurals — nothing else
+  if (word.endsWith('es') && word.length > 5) return word.slice(0, -2);
+  if (word.endsWith('s') && word.length > 4 && !word.endsWith('ss')) return word.slice(0, -1);
   return word;
 }
 
@@ -139,16 +131,19 @@ function scoreDocument(doc: IndexedDoc, queryStems: string[]): number {
   for (const qs of queryStems) {
     const idfScore = idf.get(qs) || 1;
 
+    // Match: exact word or word starts with query term (min 4 chars to avoid false positives)
+    const matches = (t: string) => t === qs || (qs.length >= 4 && t.startsWith(qs));
+
     // Title match (highest weight)
-    const titleTF = doc.titleTokens.filter((t) => t === qs || t.startsWith(qs) || qs.startsWith(t)).length;
+    const titleTF = doc.titleTokens.filter(matches).length;
     score += titleTF * idfScore * 5;
 
     // Tag match
-    const tagTF = doc.tagTokens.filter((t) => t === qs || t.startsWith(qs) || qs.startsWith(t)).length;
+    const tagTF = doc.tagTokens.filter(matches).length;
     score += tagTF * idfScore * 3;
 
     // Content match
-    const contentTF = doc.contentTokens.filter((t) => t === qs || t.startsWith(qs) || qs.startsWith(t)).length;
+    const contentTF = doc.contentTokens.filter(matches).length;
     score += contentTF * idfScore * 1;
   }
 
