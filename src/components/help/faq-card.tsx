@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { ChevronDown, ExternalLink, ArrowRight } from 'lucide-react';
+import { ChevronRight, ArrowRight } from 'lucide-react';
 import Link from 'next/link';
 import type { ContentMeta } from '@/types/content';
 
@@ -13,71 +13,54 @@ export function FaqCard({ faq }: FaqCardProps) {
   const [open, setOpen] = useState(false);
 
   return (
-    <article className={`bg-white rounded-2xl border transition-all duration-300 overflow-hidden ${
-      open
-        ? 'border-cnci-blue/20 shadow-lg shadow-blue-100/50 ring-1 ring-cnci-blue/10'
-        : 'border-slate-200/80 shadow-sm hover:shadow-md hover:border-slate-300/80'
-    }`}>
+    <div className={`border-b border-slate-100 last:border-0 ${open ? 'pb-4' : ''}`}>
       <button
         onClick={() => setOpen(!open)}
-        className="w-full text-left px-6 py-5 flex justify-between items-center gap-4 group focus:outline-none focus-visible:ring-2 focus-visible:ring-cnci-blue/30 rounded-t-2xl"
+        className="w-full text-left py-3.5 flex justify-between items-start gap-3 group"
         aria-expanded={open}
       >
-        <div className="flex items-center gap-3 min-w-0">
-          <div className={`w-2 h-2 rounded-full shrink-0 transition-colors ${
-            open ? 'bg-cnci-blue' : 'bg-slate-300 group-hover:bg-cnci-blue/50'
-          }`} />
-          <h3 className={`font-semibold text-[15px] leading-snug transition-colors ${
-            open ? 'text-cnci-blue' : 'text-slate-800 group-hover:text-slate-900'
-          }`}>
-            {faq.title}
-          </h3>
-        </div>
-        <ChevronDown
-          size={18}
-          className={`shrink-0 transition-all duration-300 ${
-            open ? 'rotate-180 text-cnci-blue' : 'text-slate-400 group-hover:text-slate-600'
+        <span className={`text-[14px] leading-relaxed transition-colors ${
+          open ? 'text-cnci-navy font-medium' : 'text-slate-700 group-hover:text-slate-900'
+        }`}>
+          {faq.title}
+        </span>
+        <ChevronRight
+          size={15}
+          className={`mt-0.5 shrink-0 transition-transform text-slate-400 ${
+            open ? 'rotate-90 text-cnci-navy' : 'group-hover:text-slate-600'
           }`}
         />
       </button>
 
       {open && (
-        <div className="px-6 pb-6 animate-fade-up">
+        <div className="pl-0 pb-1 animate-fade-up">
           {faq.excerpt && (
-            <p className="text-slate-600 text-[15px] leading-relaxed ml-5 mb-4">{faq.excerpt}</p>
+            <p className="text-slate-500 text-[13px] leading-relaxed mb-3">{faq.excerpt}</p>
           )}
-
-          <div className="flex flex-wrap items-center gap-2 ml-5">
+          <div className="flex flex-wrap items-center gap-2">
             <Link
               href={`/help/${faq.category}/${faq.slug}`}
-              className="inline-flex items-center gap-1.5 text-sm font-semibold text-cnci-blue hover:text-cnci-dark bg-blue-50 hover:bg-blue-100 px-4 py-2 rounded-lg transition-all"
+              className="text-[12px] font-medium text-cnci-navy hover:text-cnci-dark flex items-center gap-1 transition-colors"
             >
-              Leer más <ArrowRight size={14} />
+              Leer más <ArrowRight size={11} />
             </Link>
-
             {faq.suggestedActions?.slice(0, 2).map((action, i) => (
               <a
                 key={i}
                 href={action.href || '#'}
                 target={action.href?.startsWith('http') ? '_blank' : undefined}
                 rel={action.href?.startsWith('http') ? 'noopener noreferrer' : undefined}
-                className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 px-3 py-2 rounded-lg transition-colors"
+                className="text-[11px] text-slate-500 hover:text-cnci-navy bg-slate-50 hover:bg-slate-100 px-2 py-1 rounded transition-colors"
               >
-                <ExternalLink size={11} />
                 {action.label}
               </a>
             ))}
           </div>
-
           {faq.area && (
-            <div className="ml-5 mt-4 pt-3 border-t border-slate-100">
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-                {faq.area}
-              </span>
-            </div>
+            <span className="text-[10px] text-slate-300 mt-2 block">{faq.area}</span>
           )}
         </div>
       )}
-    </article>
+    </div>
   );
 }

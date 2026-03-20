@@ -2,152 +2,84 @@
 
 import { useState } from 'react';
 import { useSession, signOut } from 'next-auth/react';
-import { Menu, X, FileText, Shield, BarChart3, LogOut, LogIn, Brain, User } from 'lucide-react';
+import { Menu, X, FileText, BarChart3, LogOut, LogIn, Brain, ChevronDown } from 'lucide-react';
 import Link from 'next/link';
 
-const EXTERNAL_LINKS = [
-  { label: 'Office 365', href: 'https://www.office.com/' },
-  { label: 'Biblioteca', href: 'https://cnci.unlimitedlearning.io/' },
-  { label: 'Blackboard', href: 'https://cnci.blackboard.com/ultra/' },
-];
-
 export function Navbar() {
-  const { data: session, status } = useSession();
+  const { data: session } = useSession();
   const [mobileOpen, setMobileOpen] = useState(false);
 
   const role = (session?.user as any)?.role as string | undefined;
   const isStaff = role === 'staff' || role === 'director';
   const isDirector = role === 'director';
-  const userName = session?.user?.name?.split(' ')[0] || '';
+  const userName = session?.user?.name || '';
+  const initials = userName.split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase() || '?';
 
   return (
-    <nav className="sticky top-0 z-50 bg-white/80 backdrop-blur-xl border-b border-slate-200/60">
-      <div className="max-w-6xl mx-auto px-4 sm:px-6">
-        <div className="flex justify-between h-16 items-center">
-          {/* Logo */}
-          <Link href="/" className="flex items-center gap-2.5">
-            <img src="/logo-cnci.png" alt="CNCI" className="h-10 w-auto object-contain" />
-            <div className="hidden sm:block">
-              <span className="font-bold text-slate-800 text-[15px] leading-none">Centro de Ayuda</span>
-              <span className="block text-cnci-blue font-black text-xs tracking-wider">CNCI</span>
-            </div>
+    <nav className="sticky top-0 z-50 bg-white border-b border-slate-200">
+      <div className="max-w-5xl mx-auto px-4 sm:px-6">
+        <div className="flex justify-between h-14 items-center">
+          <Link href="/" className="flex items-center gap-2">
+            <img src="/logo-cnci.png" alt="CNCI" className="h-8 w-auto" />
+            <span className="font-semibold text-slate-800 text-sm hidden sm:block">Centro de Ayuda</span>
           </Link>
 
-          {/* Desktop nav */}
-          <div className="hidden md:flex items-center gap-1">
-            {EXTERNAL_LINKS.map((link) => (
-              <a key={link.href} href={link.href} target="_blank" rel="noopener noreferrer" className="text-[13px] font-medium text-slate-500 hover:text-slate-800 px-3 py-2 rounded-lg hover:bg-slate-50 transition-all">
-                {link.label}
-              </a>
-            ))}
+          {/* Desktop */}
+          <div className="hidden md:flex items-center gap-0.5 text-[13px]">
+            <a href="https://cnci.blackboard.com/ultra/" target="_blank" rel="noopener noreferrer" className="text-slate-500 hover:text-slate-800 px-3 py-1.5 rounded-md hover:bg-slate-50 transition-colors">Blackboard</a>
+            <a href="https://www.office.com/" target="_blank" rel="noopener noreferrer" className="text-slate-500 hover:text-slate-800 px-3 py-1.5 rounded-md hover:bg-slate-50 transition-colors">Office 365</a>
 
-            <div className="w-px h-5 bg-slate-200 mx-1" />
+            <div className="w-px h-4 bg-slate-200 mx-2" />
 
-            {/* Auth-dependent links */}
             {session ? (
               <>
-                <Link href="/tickets" className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-slate-600 hover:text-cnci-blue px-3 py-2 rounded-lg hover:bg-blue-50 transition-all">
-                  <FileText size={14} /> Mis solicitudes
+                <Link href="/tickets" className="text-slate-500 hover:text-slate-800 px-3 py-1.5 rounded-md hover:bg-slate-50 transition-colors flex items-center gap-1">
+                  <FileText size={13} /> Solicitudes
                 </Link>
-
                 {isStaff && (
-                  <Link href="/admin/content" className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-violet-600 hover:text-violet-700 px-3 py-2 rounded-lg hover:bg-violet-50 transition-all">
-                    <Brain size={14} /> Contenido
+                  <Link href="/admin/content" className="text-slate-500 hover:text-slate-800 px-3 py-1.5 rounded-md hover:bg-slate-50 transition-colors flex items-center gap-1">
+                    <Brain size={13} /> Contenido
                   </Link>
                 )}
-
                 {isDirector && (
-                  <Link href="/admin" className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-amber-600 hover:text-amber-700 px-3 py-2 rounded-lg hover:bg-amber-50 transition-all">
-                    <BarChart3 size={14} /> Dashboard
+                  <Link href="/admin" className="text-slate-500 hover:text-slate-800 px-3 py-1.5 rounded-md hover:bg-slate-50 transition-colors flex items-center gap-1">
+                    <BarChart3 size={13} /> Métricas
                   </Link>
                 )}
-
-                {/* User menu */}
-                <div className="flex items-center gap-2 ml-2 pl-2 border-l border-slate-200">
-                  <div className="w-7 h-7 rounded-full bg-cnci-blue/10 flex items-center justify-center">
-                    <User size={14} className="text-cnci-blue" />
-                  </div>
-                  <div className="hidden lg:block">
-                    <p className="text-xs font-semibold text-slate-700 leading-none">{userName}</p>
-                    <p className="text-[10px] text-slate-400 mt-0.5">
-                      {isDirector ? 'Directora' : isStaff ? 'Staff' : 'Alumno'}
-                    </p>
-                  </div>
-                  <button
-                    onClick={() => signOut({ callbackUrl: '/' })}
-                    className="p-1.5 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 transition-all"
-                    title="Cerrar sesión"
-                  >
+                <div className="w-px h-4 bg-slate-200 mx-2" />
+                <div className="flex items-center gap-2">
+                  <div className="w-6 h-6 rounded-full bg-cnci-navy text-white text-[10px] font-bold flex items-center justify-center">{initials}</div>
+                  <button onClick={() => signOut({ callbackUrl: '/' })} className="text-slate-400 hover:text-red-500 transition-colors" title="Salir">
                     <LogOut size={14} />
                   </button>
                 </div>
               </>
             ) : (
-              <Link href="/auth/login" className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-cnci-blue hover:text-cnci-dark px-4 py-2 rounded-lg bg-blue-50 hover:bg-blue-100 transition-all">
-                <LogIn size={14} /> Iniciar sesión
+              <Link href="/auth/login" className="text-cnci-navy font-medium px-3 py-1.5 rounded-md hover:bg-cnci-navy/5 transition-colors flex items-center gap-1">
+                <LogIn size={13} /> Entrar
               </Link>
             )}
           </div>
 
-          {/* Mobile toggle */}
-          <button
-            onClick={() => setMobileOpen(!mobileOpen)}
-            className="md:hidden text-slate-500 hover:text-slate-800 p-2 rounded-lg hover:bg-slate-50 transition-all"
-            aria-label="Menú"
-          >
-            {mobileOpen ? <X size={22} /> : <Menu size={22} />}
+          <button onClick={() => setMobileOpen(!mobileOpen)} className="md:hidden text-slate-500 p-1.5" aria-label="Menú">
+            {mobileOpen ? <X size={20} /> : <Menu size={20} />}
           </button>
         </div>
       </div>
 
-      {/* Mobile menu */}
       {mobileOpen && (
-        <div className="md:hidden absolute top-16 inset-x-0 bg-white/95 backdrop-blur-xl border-b border-slate-200 shadow-xl z-40">
-          <div className="flex flex-col p-4 gap-1">
-            {EXTERNAL_LINKS.map((link) => (
-              <a key={link.href} href={link.href} target="_blank" rel="noopener noreferrer" className="text-sm font-medium text-slate-600 px-4 py-3 rounded-xl hover:bg-slate-50" onClick={() => setMobileOpen(false)}>
-                {link.label}
-              </a>
-            ))}
-
-            <div className="h-px bg-slate-100 my-2" />
-
+        <div className="md:hidden border-t border-slate-100 bg-white">
+          <div className="flex flex-col py-2 px-4 text-sm">
+            <a href="https://cnci.blackboard.com/ultra/" target="_blank" rel="noopener noreferrer" className="py-2.5 text-slate-600 border-b border-slate-50">Blackboard</a>
+            <a href="https://www.office.com/" target="_blank" rel="noopener noreferrer" className="py-2.5 text-slate-600 border-b border-slate-50">Office 365</a>
             {session ? (
               <>
-                <div className="px-4 py-2 flex items-center gap-2">
-                  <div className="w-8 h-8 rounded-full bg-cnci-blue/10 flex items-center justify-center">
-                    <User size={16} className="text-cnci-blue" />
-                  </div>
-                  <div>
-                    <p className="text-sm font-semibold text-slate-700">{session.user?.name}</p>
-                    <p className="text-[10px] text-slate-400">{session.user?.email}</p>
-                  </div>
-                </div>
-
-                <Link href="/tickets" className="text-sm font-semibold text-slate-600 px-4 py-3 rounded-xl hover:bg-slate-50 flex items-center gap-2" onClick={() => setMobileOpen(false)}>
-                  <FileText size={16} /> Mis solicitudes
-                </Link>
-
-                {isStaff && (
-                  <Link href="/admin/content" className="text-sm font-semibold text-violet-600 px-4 py-3 rounded-xl hover:bg-violet-50 flex items-center gap-2" onClick={() => setMobileOpen(false)}>
-                    <Brain size={16} /> Gestionar contenido
-                  </Link>
-                )}
-
-                {isDirector && (
-                  <Link href="/admin" className="text-sm font-semibold text-amber-600 px-4 py-3 rounded-xl hover:bg-amber-50 flex items-center gap-2" onClick={() => setMobileOpen(false)}>
-                    <BarChart3 size={16} /> Dashboard
-                  </Link>
-                )}
-
-                <button onClick={() => signOut({ callbackUrl: '/' })} className="text-sm font-semibold text-red-500 px-4 py-3 rounded-xl hover:bg-red-50 text-left flex items-center gap-2">
-                  <LogOut size={16} /> Cerrar sesión
-                </button>
+                <Link href="/tickets" className="py-2.5 text-slate-600 border-b border-slate-50" onClick={() => setMobileOpen(false)}>Mis solicitudes</Link>
+                {isStaff && <Link href="/admin/content" className="py-2.5 text-slate-600 border-b border-slate-50" onClick={() => setMobileOpen(false)}>Gestionar contenido</Link>}
+                <button onClick={() => signOut({ callbackUrl: '/' })} className="py-2.5 text-red-500 text-left">Cerrar sesión</button>
               </>
             ) : (
-              <Link href="/auth/login" className="text-sm font-bold text-white bg-cnci-blue px-4 py-3 rounded-xl text-center" onClick={() => setMobileOpen(false)}>
-                Iniciar sesión
-              </Link>
+              <Link href="/auth/login" className="py-2.5 text-cnci-navy font-medium" onClick={() => setMobileOpen(false)}>Iniciar sesión</Link>
             )}
           </div>
         </div>
