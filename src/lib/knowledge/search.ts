@@ -84,10 +84,14 @@ export function exactFaqMatch(query: string): ContentItem | null {
   const normalized = query.toLowerCase().trim()
     .replace(/^[¿?¡!]+/, '').replace(/[?!]+$/, '').trim();
 
-  // Strategy 1: Exact title match
+  // Normalize accents for matching
+  const noAccent = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const normNoAccent = noAccent(normalized);
+
+  // Strategy 1: Exact title match (with and without accents)
   for (const item of contentCache) {
     const titleNorm = item.title.toLowerCase().replace(/^[¿?¡!]+/, '').replace(/[?!]+$/, '').trim();
-    if (titleNorm === normalized) return item;
+    if (titleNorm === normalized || noAccent(titleNorm) === normNoAccent) return item;
   }
 
   // Extract meaningful keywords
@@ -124,10 +128,25 @@ export function exactFaqMatch(query: string): ContentItem | null {
     if (bestMatch && bestScore >= 0.5) return bestMatch;
   }
 
-  // Strategy 3: Fuse.js — works well for both single words and phrases
-  const fuseResults = fuseInstance.search(normalized, { limit: 1 });
-  if (fuseResults.length > 0 && (fuseResults[0].score ?? 1) < 0.55) {
-    return fuseResults[0].item;
+  // Strategy 2.5: For short queries where all keywords were stopwords,
+  // try the original query against tags (accent-normalized)
+  if (keywords.length === 0 && normalized.length >= 3) {
+    for (const item of contentCache) {
+      const titleNoAccent = noAccent(item.title.toLowerCase());
+      if (titleNoAccent.includes(normNoAccent)) return item;
+    }
+  }
+
+  // Strategy 3: Fuse.js — try both original query and accent-stripped version
+  const fuseResults = fuseInstance.search(normalized, { limit: 3 });
+  const fuseResultsNoAccent = normNoAccent !== normalized
+    ? fuseInstance.search(normNoAccent, { limit: 3 })
+    : [];
+
+  // Merge and pick best
+  const allFuse = [...fuseResults, ...fuseResultsNoAccent].sort((a, b) => (a.score ?? 1) - (b.score ?? 1));
+  if (allFuse.length > 0 && (allFuse[0].score ?? 1) < 0.55) {
+    return allFuse[0].item;
   }
 
   return null;
