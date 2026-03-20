@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
+import { requireStaff, AuthError } from '@/lib/auth/session';
 
 /**
  * POST /api/import — Import FAQs from JSON array.
@@ -22,6 +23,13 @@ import path from 'path';
  * Pregunta, Respuesta, Categoría, Tags, Área, Contacto, Prioridad
  */
 export async function POST(req: NextRequest) {
+  try {
+    await requireStaff();
+  } catch (e) {
+    if (e instanceof AuthError) return NextResponse.json({ error: e.message }, { status: e.status });
+    return NextResponse.json({ error: 'No autorizado.' }, { status: 401 });
+  }
+
   try {
     const data = await req.json();
     const items: any[] = Array.isArray(data) ? data : data.items || data.faqs || [];

@@ -4,6 +4,7 @@ import { ChevronLeft, Clock, Tag } from 'lucide-react';
 import { Navbar } from '@/components/layout/navbar';
 import { Footer } from '@/components/layout/footer';
 import { ChatWidget } from '@/components/chat/chat-widget';
+import { SafeContent } from '@/components/help/safe-content';
 import { getContentBySlug, loadPublishedContent, loadCategories } from '@/lib/knowledge/loader';
 
 interface Props {
@@ -17,18 +18,7 @@ export default async function ArticlePage({ params }: Props) {
   const categories = loadCategories();
   const category = categories.find((c) => c.id === item.category);
 
-  // Simple MDX to HTML (basic rendering without full MDX pipeline for speed)
-  const htmlContent = item.content
-    .replace(/^### (.+)$/gm, '<h3 class="text-lg font-bold text-slate-800 mt-6 mb-3">$1</h3>')
-    .replace(/^## (.+)$/gm, '<h2 class="text-xl font-bold text-slate-800 mt-8 mb-4">$1</h2>')
-    .replace(/^# (.+)$/gm, '<h1 class="text-2xl font-extrabold text-slate-800 mt-8 mb-4">$1</h1>')
-    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" class="text-cnci-blue underline hover:text-cnci-dark" target="_blank" rel="noopener">$1</a>')
-    .replace(/^- (.+)$/gm, '<li class="ml-4 mb-1">• $1</li>')
-    .replace(/^\d+\. (.+)$/gm, '<li class="ml-4 mb-1">$1</li>')
-    .replace(/\n\n/g, '</p><p class="mb-3 leading-relaxed">')
-    .replace(/^/, '<p class="mb-3 leading-relaxed">')
-    .replace(/$/, '</p>');
+  // Content is rendered by SafeContent component (sanitized, no XSS risk)
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -62,11 +52,8 @@ export default async function ArticlePage({ params }: Props) {
         </div>
 
         <div className="max-w-3xl mx-auto px-4 py-10">
-          {/* Article content */}
-          <article
-            className="prose-cnci text-slate-600"
-            dangerouslySetInnerHTML={{ __html: htmlContent }}
-          />
+          {/* Article content — sanitized rendering, no XSS risk */}
+          <SafeContent content={item.content} className="prose-cnci" />
 
           {/* Actions */}
           {item.suggestedActions && item.suggestedActions.length > 0 && (

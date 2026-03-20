@@ -1,8 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getPlatformSettings } from '@/lib/settings/service';
 import { getDb } from '@/lib/db/database';
+import { requireDirector, AuthError } from '@/lib/auth/session';
 
 export async function POST(req: NextRequest) {
+  try { await requireDirector(); } catch (e) {
+    if (e instanceof AuthError) return NextResponse.json({ error: e.message }, { status: e.status });
+    return NextResponse.json({ error: 'No autorizado.' }, { status: 401 });
+  }
+
   getDb();
   const { service } = await req.json();
   const settings = getPlatformSettings();
@@ -25,80 +31,55 @@ async function testAzure(s: any) {
     const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
-    if (data.issuer) {
-      return NextResponse.json({ ok: true, message: `Tenant válido. Issuer: ${data.issuer}` });
-    }
-    throw new Error('Respuesta inválida del tenant.');
+    return NextResponse.json({ ok: !!data.issuer, message: data.issuer ? `Tenant válido.` : 'Respuesta inválida.' });
   } catch (err: any) {
-    return NextResponse.json({ ok: false, error: `No se pudo conectar: ${err.message}` });
+    return NextResponse.json({ ok: false, error: 'No se pudo conectar al tenant de Azure.' });
   }
 }
 
 async function testSmtp(s: any) {
-  if (!s.smtp_host) {
-    return NextResponse.json({ ok: false, error: 'Falta el host SMTP.' });
-  }
+  if (!s.smtp_host) return NextResponse.json({ ok: false, error: 'Falta el host SMTP.' });
   try {
     const nodemailer = await import('nodemailer');
     const transport = nodemailer.createTransport({
-      host: s.smtp_host,
-      port: parseInt(s.smtp_port || '587'),
+      host: s.smtp_host, port: parseInt(s.smtp_port || '587'),
       secure: s.smtp_port === '465',
       auth: s.smtp_user ? { user: s.smtp_user, pass: s.smtp_pass } : undefined,
       connectionTimeout: 5000,
     });
     await transport.verify();
-    return NextResponse.json({ ok: true, message: `Conectado a ${s.smtp_host}:${s.smtp_port}` });
-  } catch (err: any) {
-    return NextResponse.json({ ok: false, error: `Error SMTP: ${err.message}` });
+    return NextResponse.json({ ok: true, message: `Conectado a ${s.smtp_host}` });
+  } catch {
+    return NextResponse.json({ ok: false, error: 'No se pudo conectar al servidor SMTP.' });
   }
 }
 
 async function testNexus(s: any) {
-  if (!s.nexus_api_url) {
-    return NextResponse.json({ ok: false, error: 'Falta la URL de Nexus.' });
-  }
+  if (!s.nexus_api_url) return NextResponse.json({ ok: false, error: 'Falta la URL de Nexus.' });
   try {
     const res = await fetch(`${s.nexus_api_url}/api/v1/health`, {
       headers: s.nexus_api_key ? { Authorization: `Bearer ${s.nexus_api_key}` } : {},
       signal: AbortSignal.timeout(5000),
     });
-    if (res.ok) {
-      return NextResponse.json({ ok: true, message: `Nexus respondió OK (${res.status})` });
-    }
-    return NextResponse.json({ ok: false, error: `Nexus respondió ${res.status}` });
-  } catch (err: any) {
-    return NextResponse.json({ ok: false, error: `No se pudo conectar: ${err.message}` });
+    return NextResponse.json({ ok: res.ok, message: res.ok ? 'Nexus respondió OK.' : `Nexus respondió ${res.status}` });
+  } catch {
+    return NextResponse.json({ ok: false, error: 'No se pudo conectar a Nexus.' });
   }
 }
 
 async function testAI(s: any) {
-  if (!s.ai_api_key) {
-    return NextResponse.json({ ok: false, error: 'Falta la API key de IA.' });
-  }
+  if (!s.ai_api_key) return NextResponse.json({ ok: false, error: 'Falta la API key.' });
   try {
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': s.ai_api_key,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: s.ai_model || 'claude-haiku-4-5-20251001',
-        max_tokens: 20,
-        messages: [{ role: 'user', content: 'Di "OK" si funciona.' }],
-      }),
+      headers: { 'Content-Type': 'application/json', 'x-api-key': s.ai_api_key, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({ model: s.ai_model || 'claude-haiku-4-5-20251001', max_tokens: 20, messages: [{ role: 'user', content: 'Di OK.' }] }),
       signal: AbortSignal.timeout(10000),
     });
-    if (res.ok) {
-      const data = await res.json();
-      const text = data.content?.[0]?.text || 'Sin respuesta';
-      return NextResponse.json({ ok: true, message: `IA respondió: "${text}"` });
-    }
-    const errText = await res.text();
-    return NextResponse.json({ ok: false, error: `API error ${res.status}: ${errText.slice(0, 100)}` });
-  } catch (err: any) {
-    return NextResponse.json({ ok: false, error: `Error: ${err.message}` });
+    if (!res.ok) return NextResponse.json({ ok: false, error: 'API key inválida o sin créditos.' });
+    const data = await res.json();
+    return NextResponse.json({ ok: true, message: `IA respondió: "${data.content?.[0]?.text || 'OK'}"` });
+  } catch {
+    return NextResponse.json({ ok: false, error: 'Error conectando con IA.' });
   }
 }
