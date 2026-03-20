@@ -122,8 +122,16 @@ export function exactFaqMatch(query: string): ContentItem | null {
     .filter((r) => { if (seen.has(r.item.id)) return false; seen.add(r.item.id); return true; })
     .sort((a, b) => (a.score ?? 1) - (b.score ?? 1));
 
-  if (all.length > 0 && (all[0].score ?? 1) < 0.6) {
+  if (all.length > 0 && (all[0].score ?? 1) < 0.7) {
     return all[0].item;
+  }
+
+  // Strategy 4: Full Fuse as last resort (searches content too)
+  if (fullFuse) {
+    const fullResults = fullFuse.search(normalized, { limit: 1 });
+    if (fullResults.length > 0 && (fullResults[0].score ?? 1) < 0.5) {
+      return fullResults[0].item;
+    }
   }
 
   return null;
