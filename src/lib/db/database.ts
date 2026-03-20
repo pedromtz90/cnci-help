@@ -82,5 +82,29 @@ function initSchema(db: Database.Database) {
 
     CREATE INDEX IF NOT EXISTS idx_analytics_type ON analytics_events(type);
     CREATE INDEX IF NOT EXISTS idx_analytics_date ON analytics_events(created_at);
+
+    -- Dynamic knowledge base (added via admin, no rebuild needed)
+    CREATE TABLE IF NOT EXISTS knowledge_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL,
+      slug TEXT UNIQUE NOT NULL,
+      type TEXT NOT NULL DEFAULT 'faq',
+      category TEXT NOT NULL DEFAULT 'soporte',
+      tags TEXT DEFAULT '[]',
+      area TEXT DEFAULT '',
+      contact_email TEXT DEFAULT '',
+      priority TEXT NOT NULL DEFAULT 'medium',
+      excerpt TEXT DEFAULT '',
+      content TEXT NOT NULL,
+      video_url TEXT DEFAULT '',
+      image_url TEXT DEFAULT '',
+      visibility TEXT NOT NULL DEFAULT 'published',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_knowledge_category ON knowledge_items(category);
+    CREATE INDEX IF NOT EXISTS idx_knowledge_visibility ON knowledge_items(visibility);
+    CREATE INDEX IF NOT EXISTS idx_knowledge_slug ON knowledge_items(slug);
   `);
 }

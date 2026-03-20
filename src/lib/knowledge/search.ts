@@ -1,8 +1,10 @@
 import Fuse from 'fuse.js';
 import type { ContentItem, ContentMeta, SearchResult } from '@/types/content';
+import { getAllDynamic, getIndexVersion } from './dynamic';
 
 let fuseInstance: Fuse<ContentItem> | null = null;
 let contentCache: ContentItem[] | null = null;
+let lastIndexVersion = -1;
 
 const FUSE_OPTIONS = {
   keys: [
@@ -27,12 +29,39 @@ const STOPWORDS = new Set([
   'necesito', 'quiero', 'the', 'and', 'for', 'are', 'but', 'not',
 ]);
 
+/**
+ * Initialize search index — merges static MDX content + dynamic DB content.
+ * Auto-refreshes when dynamic content changes (version bump).
+ */
+let staticContent: ContentItem[] = [];
+
 export function initSearchIndex(content: ContentItem[]): void {
-  contentCache = content;
-  fuseInstance = new Fuse(content, FUSE_OPTIONS);
+  staticContent = content;
+  rebuildIndex();
+}
+
+function rebuildIndex(): void {
+  try {
+    const dynamicContent = getAllDynamic();
+    contentCache = [...staticContent, ...dynamicContent];
+  } catch {
+    contentCache = [...staticContent];
+  }
+  fuseInstance = new Fuse(contentCache, FUSE_OPTIONS);
+  lastIndexVersion = getIndexVersion();
+}
+
+/** Ensure index is fresh — call before any search. */
+function ensureFreshIndex(): void {
+  if (!contentCache) return;
+  const currentVersion = getIndexVersion();
+  if (currentVersion !== lastIndexVersion) {
+    rebuildIndex();
+  }
 }
 
 export function search(query: string, limit = 10): SearchResult[] {
+  ensureFreshIndex();
   if (!fuseInstance || !contentCache) return [];
   const results = fuseInstance.search(query, { limit });
   return results.map((r) => ({
@@ -49,6 +78,7 @@ export function search(query: string, limit = 10): SearchResult[] {
  * 3. Fuse.js fuzzy with generous threshold
  */
 export function exactFaqMatch(query: string): ContentItem | null {
+  ensureFreshIndex();
   if (!contentCache) return null;
 
   const normalized = query.toLowerCase().trim()
@@ -108,6 +138,7 @@ export function exactFaqMatch(query: string): ContentItem | null {
  * More generous than exactFaqMatch — returns multiple items.
  */
 export function retrieveForRAG(query: string, limit = 5): ContentItem[] {
+  ensureFreshIndex();
   if (!contentCache) return [];
 
   // First try keyword-based retrieval
