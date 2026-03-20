@@ -5,7 +5,7 @@
   "description": "Centro de Ayuda CNCI — Knowledge Base + AI Chatbot",
   "scripts": {
     "dev": "next dev",
-    "build": "npm run kb:index && next build",
+    "build": "next build",
     "start": "next start",
     "kb:index": "tsx src/lib/knowledge/build-index.ts",
     "kb:validate": "tsx src/lib/knowledge/validate.ts"

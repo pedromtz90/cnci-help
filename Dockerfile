@@ -1,17 +1,17 @@
 FROM node:20-alpine AS base
 
-# Dependencies
+# Dependencies (ALL — needed for build)
 FROM base AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev
+RUN npm ci
 
 # Build
 FROM base AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-RUN npm run build
+RUN npx next build
 
 # Production
 FROM base AS runner
