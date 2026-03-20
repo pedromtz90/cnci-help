@@ -1,23 +1,79 @@
-import Fuse from 'fuse.js';
+/**
+ * CNCI Search Engine — TF-IDF based search with Spanish language support.
+ *
+ * Why not Fuse.js: Fuse is fuzzy string matching, not information retrieval.
+ * With 481+ FAQs, it returns wrong results because it matches character patterns
+ * instead of semantic relevance. TF-IDF ranks by how important a word is
+ * to a specific document vs the entire corpus — which is what we need.
+ */
 import type { ContentItem, ContentMeta, SearchResult } from '@/types/content';
 import { getAllDynamic, getIndexVersion } from './dynamic';
 
-let contentCache: ContentItem[] | null = null;
-let titleFuse: Fuse<ContentItem> | null = null;   // Fuse on titles only (for chat)
-let fullFuse: Fuse<ContentItem> | null = null;     // Fuse on all fields (for search page)
-let lastIndexVersion = -1;
+// ── Spanish NLP helpers ─────────────────────────────────────────────
 
 const STOPWORDS = new Set([
   'como', 'cómo', 'que', 'qué', 'cual', 'cuál', 'donde', 'dónde',
   'cuando', 'cuándo', 'por', 'para', 'con', 'sin', 'los', 'las',
   'del', 'una', 'uno', 'unos', 'unas', 'mis', 'sus', 'ese', 'esa',
   'esto', 'esta', 'hay', 'ser', 'hago', 'puedo', 'debo', 'tengo',
-  'necesito', 'quiero', 'the', 'and', 'for', 'are', 'but', 'not',
-  'ver', 'puede', 'hacer', 'saber', 'tener', 'dar', 'pedir',
+  'necesito', 'quiero', 'and', 'for', 'are', 'but', 'not', 'the',
+  'ver', 'puede', 'hacer', 'saber', 'tener', 'dar', 'pedir', 'desde',
+  'entre', 'sobre', 'también', 'tambien', 'más', 'mas', 'pero',
+  'muy', 'bien', 'solo', 'todo', 'toda', 'todos', 'todas', 'otro',
+  'otra', 'otros', 'otras', 'ese', 'esa', 'eso', 'este', 'estos',
 ]);
 
-const noAccent = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+function normalize(text: string): string {
+  return text
+    .toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // remove accents
+    .replace(/[¿?¡!.,;:()"\[\]{}]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
 
+function tokenize(text: string): string[] {
+  return normalize(text)
+    .split(' ')
+    .filter((w) => w.length > 1 && !STOPWORDS.has(w));
+}
+
+/** Basic Spanish stemmer — removes common suffixes */
+function stem(word: string): string {
+  if (word.length <= 4) return word;
+  // Remove plural
+  if (word.endsWith('es') && word.length > 4) return word.slice(0, -2);
+  if (word.endsWith('s') && !word.endsWith('ss')) return word.slice(0, -1);
+  // Remove common verb/noun endings
+  if (word.endsWith('cion') || word.endsWith('sion')) return word.slice(0, -4);
+  if (word.endsWith('ando') || word.endsWith('endo') || word.endsWith('iendo')) return word.slice(0, -4);
+  if (word.endsWith('mente')) return word.slice(0, -5);
+  if (word.endsWith('idad')) return word.slice(0, -4);
+  if (word.endsWith('izar')) return word.slice(0, -4);
+  if (word.endsWith('ado') || word.endsWith('ido')) return word.slice(0, -3);
+  if (word.endsWith('ar') || word.endsWith('er') || word.endsWith('ir')) return word.slice(0, -2);
+  return word;
+}
+
+function stemTokens(tokens: string[]): string[] {
+  return tokens.map(stem);
+}
+
+// ── TF-IDF Index ────────────────────────────────────────────────────
+
+interface IndexedDoc {
+  item: ContentItem;
+  titleTokens: string[];
+  tagTokens: string[];
+  contentTokens: string[];
+  allTokens: string[];
+  titleRaw: string; // normalized, no accent, for contains-match
+}
+
+let contentCache: ContentItem[] | null = null;
+let indexedDocs: IndexedDoc[] = [];
+let idf: Map<string, number> = new Map();
+let lastIndexVersion = -1;
 let staticContent: ContentItem[] = [];
 
 export function initSearchIndex(content: ContentItem[]): void {
@@ -32,31 +88,36 @@ function rebuildIndex(): void {
   } catch {
     contentCache = [...staticContent];
   }
-  // Title-focused index for chatbot (high precision)
-  titleFuse = new Fuse(contentCache, {
-    keys: [
-      { name: 'title', weight: 0.7 },
-      { name: 'tags', weight: 0.3 },
-    ],
-    threshold: 0.5,
-    ignoreLocation: true,
-    includeScore: true,
-    minMatchCharLength: 2,
+
+  // Build indexed documents
+  indexedDocs = contentCache.map((item) => {
+    const titleTokens = stemTokens(tokenize(item.title));
+    const tagTokens = stemTokens(item.tags.flatMap((t) => tokenize(t)));
+    const contentTokens = stemTokens(tokenize(
+      (item.excerpt || '') + ' ' + item.content.slice(0, 300)
+    ));
+    const allTokens = [...titleTokens, ...tagTokens, ...contentTokens];
+    const titleRaw = normalize(item.title);
+
+    return { item, titleTokens, tagTokens, contentTokens, allTokens, titleRaw };
   });
-  // Full content index for search page (high recall)
-  fullFuse = new Fuse(contentCache, {
-    keys: [
-      { name: 'title', weight: 0.40 },
-      { name: 'excerpt', weight: 0.25 },
-      { name: 'tags', weight: 0.20 },
-      { name: 'content', weight: 0.15 },
-    ],
-    threshold: 0.5,
-    ignoreLocation: true,
-    includeScore: true,
-    includeMatches: true,
-    minMatchCharLength: 2,
-  });
+
+  // Compute IDF (inverse document frequency)
+  const docCount = indexedDocs.length;
+  const termDocFreq = new Map<string, number>();
+
+  for (const doc of indexedDocs) {
+    const uniqueTerms = new Set(doc.allTokens);
+    for (const term of uniqueTerms) {
+      termDocFreq.set(term, (termDocFreq.get(term) || 0) + 1);
+    }
+  }
+
+  idf = new Map();
+  for (const [term, df] of termDocFreq) {
+    idf.set(term, Math.log((docCount + 1) / (df + 1)) + 1);
+  }
+
   lastIndexVersion = getIndexVersion();
 }
 
@@ -68,84 +129,128 @@ function ensureFreshIndex(): void {
   } catch {}
 }
 
-// ── Public search (for search page) ─────────────────────────────────
+/**
+ * Score a document against a query using weighted TF-IDF.
+ * Title matches are worth 5x, tag matches 3x, content matches 1x.
+ */
+function scoreDocument(doc: IndexedDoc, queryStems: string[]): number {
+  let score = 0;
 
+  for (const qs of queryStems) {
+    const idfScore = idf.get(qs) || 1;
+
+    // Title match (highest weight)
+    const titleTF = doc.titleTokens.filter((t) => t === qs || t.startsWith(qs) || qs.startsWith(t)).length;
+    score += titleTF * idfScore * 5;
+
+    // Tag match
+    const tagTF = doc.tagTokens.filter((t) => t === qs || t.startsWith(qs) || qs.startsWith(t)).length;
+    score += tagTF * idfScore * 3;
+
+    // Content match
+    const contentTF = doc.contentTokens.filter((t) => t === qs || t.startsWith(qs) || qs.startsWith(t)).length;
+    score += contentTF * idfScore * 1;
+  }
+
+  // Normalize by query length to make scores comparable
+  return queryStems.length > 0 ? score / queryStems.length : 0;
+}
+
+// ── Public API ──────────────────────────────────────────────────────
+
+/**
+ * Search for content (used by search page and API).
+ */
 export function search(query: string, limit = 10): SearchResult[] {
   ensureFreshIndex();
-  if (!fullFuse || !contentCache) return [];
-  const results = fullFuse.search(query, { limit });
-  return results.map((r) => ({
-    item: stripContent(r.item),
-    score: 1 - (r.score ?? 1),
-    matches: r.matches?.map((m) => m.value || '').filter(Boolean),
+  if (!contentCache) return [];
+
+  const queryStems = stemTokens(tokenize(query));
+  if (queryStems.length === 0) return [];
+
+  const scored = indexedDocs
+    .map((doc) => ({ doc, score: scoreDocument(doc, queryStems) }))
+    .filter((s) => s.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit);
+
+  const maxScore = scored[0]?.score || 1;
+
+  return scored.map((s) => ({
+    item: stripContent(s.doc.item),
+    score: s.score / maxScore, // Normalize to 0-1
   }));
 }
 
-// ── Chat FAQ match (for chatbot — title-focused, high precision) ────
-
+/**
+ * Find best matching FAQ for chatbot.
+ * Strategy:
+ * 1. Exact title match
+ * 2. Title contains query
+ * 3. TF-IDF ranked search (title-weighted)
+ */
 export function exactFaqMatch(query: string): ContentItem | null {
   ensureFreshIndex();
-  if (!contentCache || !titleFuse) return null;
+  if (!contentCache) return null;
 
-  const normalized = query.toLowerCase().trim()
-    .replace(/^[¿?¡!]+/, '').replace(/[?!]+$/, '').trim();
-  const normNA = noAccent(normalized);
+  const norm = normalize(query);
 
   // Strategy 1: Exact title match
-  for (const item of contentCache) {
-    const t = noAccent(item.title.toLowerCase()).replace(/^[¿?¡!]+/, '').replace(/[?!]+$/, '').trim();
-    if (t === normNA) return item;
+  for (const doc of indexedDocs) {
+    if (doc.titleRaw === norm) return doc.item;
   }
 
-  // Strategy 2: Title CONTAINS the query (for short queries like "quien es mi asesor")
-  // Pick the shortest matching title (most specific)
-  const containsMatches: Array<{ item: ContentItem; len: number }> = [];
-  for (const item of contentCache) {
-    const t = noAccent(item.title.toLowerCase()).replace(/^[¿?¡!]+/, '').replace(/[?!]+$/, '').trim();
-    if (t.includes(normNA)) {
-      containsMatches.push({ item, len: t.length });
+  // Strategy 2: Title contains query (shortest = most specific)
+  if (norm.length >= 4) {
+    const matches: IndexedDoc[] = [];
+    for (const doc of indexedDocs) {
+      if (doc.titleRaw.includes(norm)) {
+        matches.push(doc);
+      }
     }
-  }
-  if (containsMatches.length > 0) {
-    containsMatches.sort((a, b) => a.len - b.len);
-    return containsMatches[0].item;
-  }
-
-  // Strategy 3: Title Fuse search (title + tags only, NOT content)
-  const results = titleFuse.search(normalized, { limit: 5 });
-  // Also try without accents
-  const resultsNA = normNA !== normalized ? titleFuse.search(normNA, { limit: 5 }) : [];
-
-  // Merge, dedupe, pick best
-  const seen = new Set<string>();
-  const all = [...results, ...resultsNA]
-    .filter((r) => { if (seen.has(r.item.id)) return false; seen.add(r.item.id); return true; })
-    .sort((a, b) => (a.score ?? 1) - (b.score ?? 1));
-
-  if (all.length > 0 && (all[0].score ?? 1) < 0.7) {
-    return all[0].item;
-  }
-
-  // Strategy 4: Full Fuse as last resort (searches content too)
-  if (fullFuse) {
-    const fullResults = fullFuse.search(normalized, { limit: 1 });
-    if (fullResults.length > 0 && (fullResults[0].score ?? 1) < 0.5) {
-      return fullResults[0].item;
+    if (matches.length > 0) {
+      matches.sort((a, b) => a.titleRaw.length - b.titleRaw.length);
+      return matches[0].item;
     }
   }
 
-  return null;
+  // Strategy 3: TF-IDF search
+  const queryStems = stemTokens(tokenize(query));
+  if (queryStems.length === 0) return null;
+
+  const scored = indexedDocs
+    .map((doc) => ({ doc, score: scoreDocument(doc, queryStems) }))
+    .filter((s) => s.score > 0)
+    .sort((a, b) => b.score - a.score);
+
+  if (scored.length === 0) return null;
+
+  // Only return if score is significantly above the second result (confidence)
+  const best = scored[0];
+  const second = scored[1];
+  const minScore = 2; // minimum absolute score to consider a match
+
+  if (best.score < minScore) return null;
+
+  return best.doc.item;
 }
 
-// ── RAG retrieval (for chatbot context when no exact match) ─────────
-
+/**
+ * Retrieve context for RAG.
+ */
 export function retrieveForRAG(query: string, limit = 5): ContentItem[] {
   ensureFreshIndex();
-  if (!fullFuse || !contentCache) return [];
-  const results = fullFuse.search(query, { limit });
-  return results
-    .filter((r) => (r.score ?? 1) < 0.65)
-    .map((r) => r.item);
+  if (!contentCache) return [];
+
+  const queryStems = stemTokens(tokenize(query));
+  if (queryStems.length === 0) return [];
+
+  return indexedDocs
+    .map((doc) => ({ doc, score: scoreDocument(doc, queryStems) }))
+    .filter((s) => s.score > 1)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit)
+    .map((s) => s.doc.item);
 }
 
 function stripContent(item: ContentItem): ContentMeta {

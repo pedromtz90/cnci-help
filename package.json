@@ -14,7 +14,6 @@
     "@mastra/core": "^1.15.0",
     "better-sqlite3": "^11.7.0",
     "clsx": "^2.1.1",
-    "fuse.js": "^7.0.0",
     "gray-matter": "^4.0.3",
     "lucide-react": "^0.468.0",
     "next": "^14.2.21",
