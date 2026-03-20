@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Bot, X, Send, GraduationCap, Loader2, ArrowRight, Ticket, FileText } from 'lucide-react';
+import { Bot, X, Send, GraduationCap, Loader2, ArrowRight, Ticket, FileText, UserCheck, Phone } from 'lucide-react';
 import type { ChatResponse, ChatHistoryItem } from '@/types/content';
 import { TicketForm } from '@/components/tickets/ticket-form';
 
@@ -26,6 +26,8 @@ export function ChatWidget() {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [showTicketForm, setShowTicketForm] = useState(false);
+  const [showEscalate, setShowEscalate] = useState(false);
+  const [escalating, setEscalating] = useState(false);
   const [showPulse, setShowPulse] = useState(true);
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -156,16 +158,35 @@ export function ChatWidget() {
               </div>
             )}
 
+            {/* Escalation form overlay */}
+            {showEscalate && (
+              <div className="absolute inset-0 bg-white z-20 overflow-y-auto p-4 rounded-3xl">
+                <div className="flex items-center justify-between mb-3">
+                  <p className="text-sm font-bold text-slate-800">Hablar con un asesor</p>
+                  <button onClick={() => setShowEscalate(false)} className="text-slate-400 hover:text-slate-700"><X size={16} /></button>
+                </div>
+                <p className="text-xs text-slate-500 mb-4">Déjanos tus datos y un asesor te contactará. Tu conversación se transfiere completa.</p>
+                <EscalateForm
+                  chatHistory={messages}
+                  onSuccess={(msg) => {
+                    setShowEscalate(false);
+                    setMessages((prev) => [...prev, { role: 'assistant', content: msg }]);
+                  }}
+                  onCancel={() => setShowEscalate(false)}
+                />
+              </div>
+            )}
+
             {/* Input area */}
             <div className="border-t border-slate-100 p-4 shrink-0 bg-white">
-              {messages.length > 0 && !showTicketForm && (
+              {messages.length > 0 && !showTicketForm && !showEscalate && (
                 <div className="flex gap-2 mb-3">
+                  <button onClick={() => setShowEscalate(true)} className="text-[11px] font-bold text-white bg-blue-600 px-3 py-1.5 rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-1">
+                    <UserCheck size={11} /> Hablar con asesor
+                  </button>
                   <button onClick={() => setShowTicketForm(true)} className="text-[11px] font-bold text-slate-500 bg-slate-50 px-3 py-1.5 rounded-lg border border-slate-100 hover:bg-blue-50 hover:text-blue-600 transition-colors flex items-center gap-1">
                     <Ticket size={11} /> Crear ticket
                   </button>
-                  <a href="/tickets" className="text-[11px] font-bold text-slate-500 bg-slate-50 px-3 py-1.5 rounded-lg border border-slate-100 hover:bg-blue-50 hover:text-blue-600 transition-colors flex items-center gap-1">
-                    <FileText size={11} /> Mis solicitudes
-                  </a>
                 </div>
               )}
               <form onSubmit={(e) => { e.preventDefault(); send(input); }} className="flex gap-2">
@@ -193,5 +214,72 @@ export function ChatWidget() {
         </div>
       )}
     </>
+  );
+}
+
+// ── Escalation Form ─────────────────────────────────────────────────
+
+function EscalateForm({ chatHistory, onSuccess, onCancel }: {
+  chatHistory: Message[];
+  onSuccess: (msg: string) => void;
+  onCancel: () => void;
+}) {
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState('');
+  const [sending, setSending] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSending(true);
+
+    try {
+      const res = await fetch('/api/escalate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          studentName: name,
+          studentEmail: email,
+          phone: phone || undefined,
+          subject: chatHistory.find((m) => m.role === 'user')?.content?.slice(0, 100) || 'Escalación desde chatbot',
+          chatHistory: chatHistory.map((m) => ({ role: m.role, content: m.content })),
+          category: 'soporte',
+        }),
+      });
+      const data = await res.json();
+      onSuccess(data.message || 'Tu caso fue transferido a un asesor. Te contactarán pronto por correo o WhatsApp.');
+    } catch {
+      onSuccess('No pudimos transferir en este momento. Contacta al 800 681 5314 (opción 4 y 5) o escribe a servicios@cncivirtual.mx');
+    }
+    setSending(false);
+  };
+
+  const input = "w-full px-3 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20";
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-3">
+      <div>
+        <label className="block text-[10px] font-bold text-slate-500 mb-1">Tu nombre *</label>
+        <input required value={name} onChange={(e) => setName(e.target.value)} className={input} placeholder="Nombre completo" />
+      </div>
+      <div>
+        <label className="block text-[10px] font-bold text-slate-500 mb-1">Correo electrónico *</label>
+        <input required type="email" value={email} onChange={(e) => setEmail(e.target.value)} className={input} placeholder="tu@correo.com" />
+      </div>
+      <div>
+        <label className="block text-[10px] font-bold text-slate-500 mb-1">WhatsApp (opcional)</label>
+        <input value={phone} onChange={(e) => setPhone(e.target.value)} className={input} placeholder="81 1234 5678" />
+      </div>
+      <p className="text-[10px] text-slate-400">
+        Tu conversación completa se enviará al asesor para que no tengas que repetir nada.
+      </p>
+      <div className="flex gap-2 pt-1">
+        <button type="button" onClick={onCancel} className="flex-1 py-2.5 rounded-xl text-slate-500 text-xs font-bold hover:bg-slate-100">Cancelar</button>
+        <button type="submit" disabled={sending} className="flex-1 py-2.5 rounded-xl bg-blue-600 text-white text-xs font-bold hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-1">
+          {sending ? <Loader2 size={12} className="animate-spin" /> : <UserCheck size={12} />}
+          {sending ? 'Transfiriendo...' : 'Transferir a asesor'}
+        </button>
+      </div>
+    </form>
   );
 }

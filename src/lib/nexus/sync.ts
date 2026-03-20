@@ -1,91 +1,134 @@
-import type { Ticket } from '@/types/content';
-
 /**
- * Nexus Integration — Sync CNCI tickets to Nexus CRM
+ * Nexus Integration — Escalate chatbot conversations to human advisors.
  *
- * Strategy:
- * 1. When a ticket is created in CNCI, sync it as a Contact + Task/Note in Nexus
- * 2. When a ticket status changes, update the Nexus task
- * 3. The Nexus API is at the production server (configured via env)
+ * Flow:
+ * 1. Student asks chatbot → chatbot can't resolve
+ * 2. Student clicks "Transferir a asesor" or "Crear ticket"
+ * 3. CNCI creates contact + conversation in Nexus with full chat history
+ * 4. Advisor sees it in Nexus inbox → can respond via WhatsApp, email, or web
  *
- * This is a one-way push: CNCI → Nexus.
- * Staff uses Nexus to see the full picture and respond.
+ * Nexus API:
+ * - POST /conversations — create conversation with contact
+ * - POST /conversations/:id/messages — add messages (chat history)
+ * - Conversation has handlingMode: 'HUMAN_REQUIRED' for immediate human attention
  */
-
-const NEXUS_API_URL = process.env.NEXUS_API_URL || '';
-const NEXUS_API_KEY = process.env.NEXUS_API_KEY || '';
+import type { Ticket } from '@/types/content';
+import { getConfig } from '@/lib/settings/service';
 
 interface NexusSyncResult {
   success: boolean;
-  nexusCaseId?: string;
+  conversationId?: string;
+  contactId?: string;
   error?: string;
 }
 
+interface ChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
 /**
- * Sync a new ticket to Nexus as a task/case.
+ * Create a Nexus conversation from a chatbot escalation.
+ * Sends the full chat history so the advisor has context.
  */
-export async function syncTicketToNexus(ticket: Ticket): Promise<NexusSyncResult> {
-  if (!NEXUS_API_URL || !NEXUS_API_KEY) {
-    console.log('[nexus-sync] Skipped — NEXUS_API_URL not configured');
+export async function escalateToNexus(params: {
+  studentName: string;
+  studentEmail: string;
+  studentId?: string;
+  phone?: string;
+  subject: string;
+  chatHistory: ChatMessage[];
+  category: string;
+  channel?: string;
+}): Promise<NexusSyncResult> {
+  const nexusUrl = getConfig('nexus_api_url') || process.env.NEXUS_API_URL;
+  const nexusKey = getConfig('nexus_api_key') || process.env.NEXUS_API_KEY;
+
+  if (!nexusUrl || !nexusKey) {
+    console.log('[nexus] Not configured — skipping escalation');
     return { success: false, error: 'Nexus not configured' };
   }
 
   try {
-    // Step 1: Find or create contact in Nexus
-    const contactId = await findOrCreateContact(ticket);
+    // Step 1: Find or create contact
+    const contactId = await findOrCreateContact(nexusUrl, nexusKey, params);
 
-    // Step 2: Create a task/note linked to the contact
-    const taskId = await createCase(ticket, contactId);
+    // Step 2: Create conversation with HUMAN_REQUIRED mode
+    const conversationId = await createConversation(nexusUrl, nexusKey, contactId, params);
 
-    console.log(`[nexus-sync] Ticket ${ticket.folio} → Nexus case ${taskId}`);
-    return { success: true, nexusCaseId: taskId };
+    // Step 3: Add chat history as messages
+    if (params.chatHistory.length > 0) {
+      await addChatHistory(nexusUrl, nexusKey, conversationId, params.chatHistory);
+    }
+
+    console.log(`[nexus] Escalated: contact=${contactId} conversation=${conversationId}`);
+    return { success: true, conversationId, contactId };
   } catch (error: any) {
-    console.error('[nexus-sync] Failed:', error.message);
+    console.error('[nexus] Escalation failed:', error.message);
     return { success: false, error: error.message };
   }
 }
 
 /**
- * Update ticket status in Nexus.
+ * Sync a ticket to Nexus (simpler — creates task, not conversation).
  */
-export async function updateNexusCase(nexusCaseId: string, status: string): Promise<void> {
-  if (!NEXUS_API_URL || !NEXUS_API_KEY) return;
+export async function syncTicketToNexus(ticket: Ticket): Promise<NexusSyncResult> {
+  return escalateToNexus({
+    studentName: ticket.studentName,
+    studentEmail: ticket.studentEmail,
+    studentId: ticket.studentId,
+    subject: `[${ticket.folio}] ${ticket.subject}`,
+    chatHistory: ticket.chatContext
+      ? [{ role: 'user', content: ticket.chatContext }]
+      : [],
+    category: ticket.category,
+    channel: ticket.channel,
+  });
+}
+
+/**
+ * Update conversation status in Nexus when ticket changes.
+ */
+export async function updateNexusCase(conversationId: string, status: string): Promise<void> {
+  const nexusUrl = getConfig('nexus_api_url') || process.env.NEXUS_API_URL;
+  const nexusKey = getConfig('nexus_api_key') || process.env.NEXUS_API_KEY;
+  if (!nexusUrl || !nexusKey) return;
 
   try {
-    await nexusFetch(`/api/v1/tasks/${nexusCaseId}`, {
+    await nexusFetch(nexusUrl, nexusKey, `/api/v1/conversations/${conversationId}`, {
       method: 'PATCH',
       body: JSON.stringify({
-        status: mapStatusToNexus(status),
-        updatedAt: new Date().toISOString(),
+        status: status === 'resolved' || status === 'closed' ? 'RESOLVED' : 'OPEN',
       }),
     });
   } catch (error: any) {
-    console.error('[nexus-sync] Update failed:', error.message);
+    console.error('[nexus] Update failed:', error.message);
   }
 }
 
-// ── Internal helpers ────────────────────────────────────────────────
+// ── Internal ────────────────────────────────────────────────────────
 
-async function findOrCreateContact(ticket: Ticket): Promise<string> {
-  // Search by email first
-  const searchRes = await nexusFetch(`/api/v1/contacts?email=${encodeURIComponent(ticket.studentEmail)}`);
+async function findOrCreateContact(url: string, key: string, params: any): Promise<string> {
+  // Search by email
+  const searchRes = await nexusFetch(url, key, `/api/v1/contacts?email=${encodeURIComponent(params.studentEmail)}`);
   const searchData = await searchRes.json();
 
   if (searchData.data?.length > 0) {
     return searchData.data[0].id;
   }
 
-  // Create new contact
-  const createRes = await nexusFetch('/api/v1/contacts', {
+  // Create new
+  const createRes = await nexusFetch(url, key, '/api/v1/contacts', {
     method: 'POST',
     body: JSON.stringify({
-      firstName: ticket.studentName.split(' ')[0],
-      lastName: ticket.studentName.split(' ').slice(1).join(' ') || '',
-      email: ticket.studentEmail,
+      firstName: params.studentName.split(' ')[0],
+      lastName: params.studentName.split(' ').slice(1).join(' ') || '',
+      email: params.studentEmail,
+      phone: params.phone || '',
       source: 'cnci-help',
-      tags: ['alumno-cnci', ticket.category],
+      tags: ['alumno-cnci', params.category],
       customFields: {
-        matricula: ticket.studentId,
+        matricula: params.studentId || '',
       },
     }),
   });
@@ -94,22 +137,22 @@ async function findOrCreateContact(ticket: Ticket): Promise<string> {
   return createData.data?.id;
 }
 
-async function createCase(ticket: Ticket, contactId: string): Promise<string> {
-  const res = await nexusFetch('/api/v1/tasks', {
+async function createConversation(url: string, key: string, contactId: string, params: any): Promise<string> {
+  const res = await nexusFetch(url, key, '/api/v1/conversations', {
     method: 'POST',
     body: JSON.stringify({
-      title: `[CNCI ${ticket.folio}] ${ticket.subject}`,
-      description: buildCaseDescription(ticket),
       contactId,
-      status: 'todo',
-      priority: mapPriorityToNexus(ticket.priority),
-      tags: ['cnci-ticket', ticket.category, ...(ticket.tags || [])],
-      dueDate: new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString(), // 48h SLA
+      subject: params.subject,
+      channel: 'WEB',
+      status: 'OPEN',
+      priority: 'NORMAL',
+      handlingMode: 'HUMAN_REQUIRED',
+      tags: ['cnci-escalation', params.category],
       metadata: {
-        cnciFolio: ticket.folio,
-        cnciTicketId: ticket.id,
-        channel: ticket.channel,
-        department: ticket.department,
+        source: 'cnci-help-chatbot',
+        category: params.category,
+        studentId: params.studentId || '',
+        originalChannel: params.channel || 'chat',
       },
     }),
   });
@@ -118,48 +161,53 @@ async function createCase(ticket: Ticket, contactId: string): Promise<string> {
   return data.data?.id;
 }
 
-function buildCaseDescription(ticket: Ticket): string {
-  let desc = `**Alumno:** ${ticket.studentName}\n`;
-  desc += `**Matrícula:** ${ticket.studentId}\n`;
-  desc += `**Email:** ${ticket.studentEmail}\n`;
-  desc += `**Categoría:** ${ticket.category}\n`;
-  desc += `**Canal:** ${ticket.channel}\n`;
-  desc += `**Prioridad:** ${ticket.priority}\n\n`;
-  desc += `**Descripción:**\n${ticket.description}\n`;
-  if (ticket.chatContext) {
-    desc += `\n**Contexto del chat:**\n${ticket.chatContext}\n`;
+async function addChatHistory(url: string, key: string, conversationId: string, history: ChatMessage[]): Promise<void> {
+  // Add each message to the conversation
+  for (const msg of history.slice(-20)) { // Last 20 messages max
+    await nexusFetch(url, key, `/api/v1/conversations/${conversationId}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({
+        content: msg.content,
+        contentType: 'TEXT',
+        source: msg.role === 'user' ? 'CONTACT' : 'AI',
+        direction: msg.role === 'user' ? 'INBOUND' : 'OUTBOUND',
+        isInternal: false,
+        metadata: {
+          fromChatbot: true,
+          originalRole: msg.role,
+        },
+      }),
+    });
   }
-  return desc;
+
+  // Add internal note for the advisor
+  await nexusFetch(url, key, `/api/v1/conversations/${conversationId}/messages`, {
+    method: 'POST',
+    body: JSON.stringify({
+      content: `Escalación desde Centro de Ayuda CNCI.\nEl alumno no pudo resolver su duda por chatbot.\nCategoría: ${history.length} mensajes de contexto arriba.`,
+      contentType: 'TEXT',
+      source: 'HUMAN',
+      direction: 'OUTBOUND',
+      isInternal: true,
+    }),
+  });
 }
 
-function mapStatusToNexus(status: string): string {
-  const map: Record<string, string> = {
-    open: 'todo',
-    in_review: 'in_progress',
-    waiting_student: 'in_progress',
-    resolved: 'done',
-    closed: 'done',
-  };
-  return map[status] || 'todo';
-}
-
-function mapPriorityToNexus(priority: string): string {
-  const map: Record<string, string> = {
-    critical: 'urgent',
-    high: 'high',
-    medium: 'medium',
-    low: 'low',
-  };
-  return map[priority] || 'medium';
-}
-
-async function nexusFetch(path: string, options?: RequestInit): Promise<Response> {
-  return fetch(`${NEXUS_API_URL}${path}`, {
+async function nexusFetch(baseUrl: string, apiKey: string, path: string, options?: RequestInit): Promise<Response> {
+  const res = await fetch(`${baseUrl}${path}`, {
     ...options,
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${NEXUS_API_KEY}`,
+      'Authorization': `Bearer ${apiKey}`,
       ...(options?.headers || {}),
     },
+    signal: AbortSignal.timeout(10000),
   });
+
+  if (!res.ok && res.status !== 404) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Nexus API ${res.status}: ${text.slice(0, 100)}`);
+  }
+
+  return res;
 }

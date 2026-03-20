@@ -42,9 +42,9 @@ export async function POST(req: NextRequest) {
 
   // Sync to Nexus (non-blocking)
   syncTicketToNexus(ticket).then((result) => {
-    if (result.nexusCaseId) {
+    if (result.conversationId) {
       const db = getDb();
-      db.prepare('UPDATE tickets SET nexus_case_id = ? WHERE id = ?').run(result.nexusCaseId, ticket.id);
+      db.prepare('UPDATE tickets SET nexus_case_id = ? WHERE id = ?').run(result.conversationId, ticket.id);
     }
   });
 

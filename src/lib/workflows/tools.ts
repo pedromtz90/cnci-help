@@ -36,9 +36,9 @@ export async function toolCreateTicket(input: CreateTicketInput): Promise<{ tick
   });
 
   const syncResult = await syncTicketToNexus(ticket);
-  if (syncResult.nexusCaseId) {
+  if (syncResult.conversationId) {
     const db = getDb();
-    db.prepare('UPDATE tickets SET nexus_case_id = ? WHERE id = ?').run(syncResult.nexusCaseId, ticket.id);
+    db.prepare('UPDATE tickets SET nexus_case_id = ? WHERE id = ?').run(syncResult.conversationId, ticket.id);
   }
 
   return { ticket, synced: syncResult.success };
