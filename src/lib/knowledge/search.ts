@@ -145,7 +145,7 @@ export function exactFaqMatch(query: string): ContentItem | null {
 
   // Merge and pick best
   const allFuse = [...fuseResults, ...fuseResultsNoAccent].sort((a, b) => (a.score ?? 1) - (b.score ?? 1));
-  if (allFuse.length > 0 && (allFuse[0].score ?? 1) < 0.55) {
+  if (allFuse.length > 0 && (allFuse[0].score ?? 1) < 0.75) {
     return allFuse[0].item;
   }
 

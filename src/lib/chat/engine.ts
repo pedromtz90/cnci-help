@@ -83,8 +83,11 @@ function triggerWorkflows(req: ChatRequest): void {
 }
 
 function buildFaqResponse(faq: ContentItem, start: number): ChatResponse {
-  // Use excerpt for chat, with link to full article
-  const content = faq.excerpt || stripMdx(faq.content).slice(0, 500);
+  // Always use full content (up to 600 chars) — excerpts are often truncated
+  const stripped = stripMdx(faq.content);
+  const content = stripped.length > 600
+    ? stripped.slice(0, 600).replace(/\s+\S*$/, '') + '...'
+    : stripped;
 
   return {
     content,
@@ -106,7 +109,10 @@ function buildFaqResponse(faq: ContentItem, start: number): ChatResponse {
 
 function buildRetrievalResponse(items: ContentItem[], start: number): ChatResponse {
   const best = items[0];
-  const content = best.excerpt || stripMdx(best.content).slice(0, 500);
+  const stripped = stripMdx(best.content);
+  const content = stripped.length > 600
+    ? stripped.slice(0, 600).replace(/\s+\S*$/, '') + '...'
+    : stripped;
 
   const related = items.slice(1).map((item) => ({
     title: item.title,
