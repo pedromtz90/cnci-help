@@ -15,7 +15,9 @@ export default function LoginPage() {
 
 function LoginContent() {
   const searchParams = useSearchParams();
-  const callbackUrl = searchParams.get('callbackUrl') || '/';
+  const rawCallback = searchParams.get('callbackUrl') || '/';
+  // Prevent open redirect — only allow relative URLs or same domain
+  const callbackUrl = rawCallback.startsWith('/') ? rawCallback : '/';
   const errorParam = searchParams.get('error');
 
   const [email, setEmail] = useState('');

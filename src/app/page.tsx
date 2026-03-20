@@ -135,7 +135,7 @@ export default async function HomePage() {
                 </p>
                 <div className="rounded-2xl overflow-hidden border border-slate-200 shadow-lg">
                   <img
-                    src="https://i.ibb.co/RF36Vz7/Directorios-Departamentos-1.png"
+                    src="/directorio-cnci.png"
                     alt="Directorio de Departamentos CNCI"
                     className="w-full h-auto object-cover"
                     loading="lazy"

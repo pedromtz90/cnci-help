@@ -8,7 +8,7 @@ export function Footer() {
           {/* Left */}
           <div className="flex flex-col sm:flex-row items-center gap-4 text-center sm:text-left">
             <img
-              src="https://i.ibb.co/m5QcyKWg/Logo-CNCI.png"
+              src="/logo-cnci.png"
               alt="CNCI"
               className="h-8 opacity-40 grayscale"
             />

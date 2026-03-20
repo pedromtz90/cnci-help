@@ -2,6 +2,7 @@ import type { ChatRequest, ChatResponse, ContentItem, SuggestedAction } from '@/
 import { exactFaqMatch, retrieveForRAG } from '@/lib/knowledge/search';
 import { trackEvent } from '@/lib/analytics/service';
 import { flowPaymentQuestion, flowEnrollmentIntent, flowLowConfidence } from '@/lib/workflows/flows';
+import { getDepartmentEmail, getConfig } from '@/lib/settings/service';
 
 const SYSTEM_PROMPT = `Eres el Asistente Virtual de Servicios Estudiantiles de la Universidad Virtual CNCI.
 
@@ -15,16 +16,7 @@ REGLAS ESTRICTAS:
 - Mantén las respuestas concisas (máximo 3 párrafos).
 - Si detectas intención de inscripción, incluye un mensaje de bienvenida.`;
 
-const DEPARTMENT_MAP: Record<string, { name: string; email: string }> = {
-  plataformas: { name: 'Soporte Técnico', email: 'soporte@cncivirtual.mx' },
-  pagos: { name: 'Cobranza', email: 'cobranza@cncivirtual.mx' },
-  inscripcion: { name: 'Servicios Estudiantiles', email: 'servicios@cncivirtual.mx' },
-  tramites: { name: 'Servicios Estudiantiles', email: 'servicios@cncivirtual.mx' },
-  titulacion: { name: 'Titulación', email: 'titulacion@cncivirtual.mx' },
-  soporte: { name: 'Soporte Técnico', email: 'soporte@cncivirtual.mx' },
-  academico: { name: 'Servicios Estudiantiles', email: 'servicios@cncivirtual.mx' },
-  contacto: { name: 'Servicios Estudiantiles', email: 'servicios@cncivirtual.mx' },
-};
+// Department emails now come from settings (configurable via admin panel)
 
 /**
  * Main chat processing pipeline.
@@ -46,11 +38,11 @@ export async function processChat(req: ChatRequest): Promise<ChatResponse> {
   // ── Gate 2: Content retrieval ──
   const retrieved = retrieveForRAG(req.message, 3);
   if (retrieved.length > 0) {
-    const aiKey = process.env.AI_API_KEY;
+    const aiKey = getConfig('ai_api_key') || process.env.AI_API_KEY;
     if (aiKey) {
       // Gate 3: LLM synthesis with retrieved context
       trackEvent({ type: 'chat', query: req.message, category: retrieved[0].category, confidence: 'medium', source: 'llm', resolved: true });
-      return await buildLLMResponse(req, retrieved, start);
+      return await buildLLMResponse(req, retrieved, start, aiKey);
     }
     // No LLM — return best match directly
     trackEvent({ type: 'chat', query: req.message, category: retrieved[0].category, confidence: 'medium', source: 'retrieval', resolved: true });
@@ -143,6 +135,7 @@ async function buildLLMResponse(
   req: ChatRequest,
   context: ContentItem[],
   start: number,
+  apiKey: string,
 ): Promise<ChatResponse> {
   const contextText = context
     .map((item) => `[${item.title}]\n${stripMdx(item.content).slice(0, 800)}`)
@@ -153,7 +146,7 @@ async function buildLLMResponse(
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-api-key': process.env.AI_API_KEY!,
+        'x-api-key': apiKey,
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
@@ -219,13 +212,13 @@ function buildFallbackResponse(message: string, start: number): ChatResponse {
 
 function detectDepartment(msg: string): { name: string; email: string } {
   const m = msg.toLowerCase();
-  if (/pago|beca|factura|costo|mensualidad/.test(m)) return DEPARTMENT_MAP.pagos;
-  if (/inscri|registro|nuevo ingreso/.test(m)) return DEPARTMENT_MAP.inscripcion;
-  if (/titulo|titulaci|tesis|egreso/.test(m)) return DEPARTMENT_MAP.titulacion;
-  if (/blackboard|office|contrase|acceso|error|técnico|plataforma/.test(m)) return DEPARTMENT_MAP.soporte;
-  if (/constancia|certificado|credencial|tramite/.test(m)) return DEPARTMENT_MAP.tramites;
-  if (/calificaci|materia|horario|historial/.test(m)) return DEPARTMENT_MAP.academico;
-  return DEPARTMENT_MAP.contacto;
+  if (/pago|beca|factura|costo|mensualidad/.test(m)) return getDepartmentEmail('pagos');
+  if (/inscri|registro|nuevo ingreso/.test(m)) return getDepartmentEmail('inscripcion');
+  if (/titulo|titulaci|tesis|egreso/.test(m)) return getDepartmentEmail('titulacion');
+  if (/blackboard|office|contrase|acceso|error|técnico|plataforma/.test(m)) return getDepartmentEmail('soporte');
+  if (/constancia|certificado|credencial|tramite/.test(m)) return getDepartmentEmail('tramites');
+  if (/calificaci|materia|horario|historial/.test(m)) return getDepartmentEmail('academico');
+  return getDepartmentEmail('contacto');
 }
 
 function stripMdx(mdx: string): string {

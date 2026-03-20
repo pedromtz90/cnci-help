@@ -109,11 +109,13 @@ export function getSummary(days = 30): AnalyticsSummary {
 }
 
 /**
- * Get recent events for debugging/monitoring.
+ * Get recent events with pagination.
  */
-export function getRecentEvents(limit = 50): AnalyticsEvent[] {
+export function getRecentEvents(limit = 50, offset = 0): { events: AnalyticsEvent[]; total: number } {
   const db = getDb();
-  return db.prepare(
-    'SELECT * FROM analytics_events ORDER BY created_at DESC LIMIT ?'
-  ).all(limit) as any[];
+  const total = (db.prepare('SELECT COUNT(*) as count FROM analytics_events').get() as any).count;
+  const events = db.prepare(
+    'SELECT * FROM analytics_events ORDER BY created_at DESC LIMIT ? OFFSET ?'
+  ).all(limit, offset) as any[];
+  return { events, total };
 }

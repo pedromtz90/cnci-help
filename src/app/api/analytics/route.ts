@@ -42,7 +42,8 @@ export async function GET(req: NextRequest) {
   if (view === 'summary') return NextResponse.json(getSummary(days));
   if (view === 'events') {
     const limit = Math.min(parseInt(req.nextUrl.searchParams.get('limit') || '50'), 500);
-    return NextResponse.json({ events: getRecentEvents(limit) });
+    const offset = Math.max(parseInt(req.nextUrl.searchParams.get('offset') || '0'), 0);
+    return NextResponse.json(getRecentEvents(limit, offset));
   }
   return NextResponse.json({ error: 'Invalid view.' }, { status: 400 });
 }

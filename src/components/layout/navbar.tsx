@@ -26,7 +26,7 @@ export function Navbar() {
         <div className="flex justify-between h-16 items-center">
           {/* Logo */}
           <Link href="/" className="flex items-center gap-2.5">
-            <img src="https://i.ibb.co/m5QcyKWg/Logo-CNCI.png" alt="CNCI" className="h-10 w-auto object-contain" />
+            <img src="/logo-cnci.png" alt="CNCI" className="h-10 w-auto object-contain" />
             <div className="hidden sm:block">
               <span className="font-bold text-slate-800 text-[15px] leading-none">Centro de Ayuda</span>
               <span className="block text-cnci-blue font-black text-xs tracking-wider">CNCI</span>
