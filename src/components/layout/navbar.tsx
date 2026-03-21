@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useSession, signOut } from 'next-auth/react';
 import Link from 'next/link';
-import { Menu, X, LogOut, LogIn, Brain, BarChart3, FileText } from 'lucide-react';
+import { Menu, X, LogOut, LogIn, Brain, BarChart3, FileText, GitBranch } from 'lucide-react';
 
 export function Navbar() {
   const { data: session } = useSession();
@@ -46,6 +46,9 @@ export function Navbar() {
                   </Link>
                   <Link href="/admin/import" className="text-slate-500 hover:text-blue-600 transition-colors flex items-center gap-1.5 text-xs font-bold">
                     <FileText size={14} /> Importar
+                  </Link>
+                  <Link href="/admin/workflows" className="text-slate-500 hover:text-blue-600 transition-colors flex items-center gap-1.5 text-xs font-bold">
+                    <GitBranch size={14} /> Flujos
                   </Link>
                 </>
               )}
