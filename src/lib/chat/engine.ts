@@ -1,11 +1,11 @@
 import type { ChatRequest, ChatResponse, ContentItem, SuggestedAction } from '@/types/content';
-import { exactFaqMatch, retrieveForRAG } from '@/lib/knowledge/search';
+import { exactFaqMatch, retrieveForRAG, search } from '@/lib/knowledge/search';
 import { trackEvent } from '@/lib/analytics/service';
 import { flowPaymentQuestion, flowEnrollmentIntent, flowLowConfidence } from '@/lib/workflows/flows';
 import { getDepartmentEmail, getConfig } from '@/lib/settings/service';
 import { recordGap } from '@/lib/knowledge/gaps';
 
-/** System prompt — loaded from settings DB so staff can edit it from /admin/settings */
+/** System prompt — loaded from settings DB so staff can edit it */
 function getSystemPrompt(): string {
   try {
     const custom = getConfig('chatbot_prompt');
@@ -18,135 +18,134 @@ NUNCA inventes información. Si no sabes, dilo y sugiere contactar al área corr
 }
 
 /**
- * Main chat processing pipeline.
- * Gate 1: Exact FAQ match (zero LLM cost)
- * Gate 2: Content retrieval + synthesis
- * Gate 3: LLM augmentation (if configured)
+ * Main chat pipeline — 4 gates with LLM reranking.
+ *
+ * The key insight: TF-IDF is good at finding CANDIDATES but bad at picking
+ * the RIGHT one. The LLM is good at understanding which FAQ actually answers
+ * the question. So we use TF-IDF for retrieval and LLM for selection.
+ *
+ * Gate 1: Exact title match (0ms, free) — only for perfect matches
+ * Gate 2: TF-IDF candidates → LLM rerank → return real FAQ content (300ms, cheap)
+ * Gate 3: LLM synthesis when no good FAQ exists (500ms, normal cost)
  * Gate 4: Fallback with department suggestion
  */
 export async function processChat(req: ChatRequest): Promise<ChatResponse> {
   const start = Date.now();
+  const aiKey = getConfig('ai_api_key') || process.env.AI_API_KEY;
 
-  // ── Gate 1: Exact FAQ match ──
+  // ── Gate 1: Exact title match (aliases + title contains) ──
   const faqMatch = exactFaqMatch(req.message);
   if (faqMatch) {
-    trackEvent({ type: 'chat', query: req.message, category: faqMatch.category, confidence: 'high', source: 'faq', resolved: true });
-    return buildFaqResponse(faqMatch, start);
-  }
+    // Verify it's a real match, not a false positive
+    const titleWords = faqMatch.title.toLowerCase().split(/\s+/);
+    const queryWords = req.message.toLowerCase().split(/\s+/).filter((w) => w.length > 2);
+    const overlap = queryWords.filter((qw) => titleWords.some((tw) => tw.includes(qw) || qw.includes(tw)));
 
-  // ── Gate 2: Content retrieval ──
-  const retrieved = retrieveForRAG(req.message, 3);
-  if (retrieved.length > 0) {
-    const aiKey = getConfig('ai_api_key') || process.env.AI_API_KEY;
-    if (aiKey) {
-      // Gate 3: LLM synthesis with retrieved context
-      trackEvent({ type: 'chat', query: req.message, category: retrieved[0].category, confidence: 'medium', source: 'llm', resolved: true });
-      return await buildLLMResponse(req, retrieved, start, aiKey);
+    if (overlap.length >= Math.max(1, queryWords.length * 0.4)) {
+      trackEvent({ type: 'chat', query: req.message, category: faqMatch.category, confidence: 'high', source: 'faq', resolved: true });
+      return buildFaqResponse(faqMatch, start);
     }
-    // No LLM — return best match directly
-    trackEvent({ type: 'chat', query: req.message, category: retrieved[0].category, confidence: 'medium', source: 'retrieval', resolved: true });
-    return buildRetrievalResponse(retrieved, start);
+    // Low overlap — don't trust the exact match, continue to Gate 2
   }
 
-  // ── Gate 4: Fallback — offer ticket creation ──
+  // ── Gate 2: TF-IDF candidates + LLM reranking ──
+  const candidates = retrieveForRAG(req.message, 5);
+
+  if (candidates.length > 0 && aiKey) {
+    // Use LLM to pick the BEST candidate (not to generate — to SELECT)
+    const reranked = await rerankWithLLM(req.message, candidates, aiKey);
+
+    if (reranked) {
+      trackEvent({ type: 'chat', query: req.message, category: reranked.category, confidence: 'high', source: 'faq', resolved: true });
+      return buildFaqResponse(reranked, start);
+    }
+
+    // LLM said none of the candidates match — go to synthesis
+    const synthesized = await buildLLMResponse(req, candidates, start, aiKey);
+    trackEvent({ type: 'chat', query: req.message, confidence: 'medium', source: 'llm', resolved: true });
+    return synthesized;
+  }
+
+  // No AI key — return best TF-IDF result directly
+  if (candidates.length > 0) {
+    trackEvent({ type: 'chat', query: req.message, category: candidates[0].category, confidence: 'medium', source: 'retrieval', resolved: true });
+    return buildFaqResponse(candidates[0], start);
+  }
+
+  // ── Gate 4: Fallback ──
   trackEvent({ type: 'chat', query: req.message, confidence: 'low', source: 'fallback', resolved: false });
-
-  // Record as knowledge gap for training
   recordGap(req.message, 'low', 'fallback');
-
-  // Workflow triggers (non-blocking)
   triggerWorkflows(req);
-
   return buildFallbackResponse(req.message, start);
 }
 
-/** Fire-and-forget workflow triggers based on intent detection. */
-function triggerWorkflows(req: ChatRequest): void {
-  const msg = req.message.toLowerCase();
-  const ctx = req.context || {};
+/**
+ * LLM Reranker — asks the LLM which FAQ best answers the student's question.
+ * Returns the selected FAQ (real content, no hallucination) or null if none match.
+ *
+ * This is the secret sauce: TF-IDF finds candidates, LLM picks the right one.
+ * Cost: ~150 tokens input + ~20 tokens output = ~$0.00005 per query.
+ */
+async function rerankWithLLM(query: string, candidates: ContentItem[], apiKey: string): Promise<ContentItem | null> {
+  const options = candidates.map((c, i) =>
+    `${i + 1}. "${c.title}" — ${stripMdx(c.content).slice(0, 150)}`
+  ).join('\n');
 
-  // Detect payment intent
-  if (/pago|beca|factura|costo|mensualidad|descuento|cobro/.test(msg)) {
-    flowPaymentQuestion({
-      question: req.message,
-      studentName: ctx.studentName,
-      studentEmail: ctx.studentEmail,
-    }).catch(() => {});
-  }
+  try {
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: getConfig('ai_model') || process.env.AI_MODEL || 'claude-haiku-4-5-20251001',
+        max_tokens: 10,
+        system: `Eres un clasificador. El alumno pregunta algo y tienes ${candidates.length} opciones de FAQ.
+Responde SOLO con el número de la opción que MEJOR responde la pregunta del alumno.
+Si NINGUNA opción es relevante, responde "0".
+Solo responde el número, nada más.`,
+        messages: [
+          { role: 'user', content: `Pregunta del alumno: "${query}"\n\nOpciones:\n${options}` },
+        ],
+      }),
+      signal: AbortSignal.timeout(5000),
+    });
 
-  // Detect enrollment intent
-  if (/inscri|registro|nuevo ingreso|quiero estudiar|me interesa|cómo entro/.test(msg)) {
-    flowEnrollmentIntent({
-      question: req.message,
-      studentName: ctx.studentName,
-      studentEmail: ctx.studentEmail,
-    }).catch(() => {});
+    if (!response.ok) return candidates[0]; // Fallback to first candidate
+
+    const data = await response.json();
+    const text = (data.content?.[0]?.text || '').trim();
+    const choice = parseInt(text);
+
+    if (choice === 0 || isNaN(choice)) return null; // None match
+    if (choice >= 1 && choice <= candidates.length) return candidates[choice - 1];
+    return candidates[0]; // Invalid response, use first
+  } catch {
+    return candidates[0]; // On error, use first TF-IDF result
   }
 }
+
+// ── Response builders ───────────────────────────────────────────────
 
 function buildFaqResponse(faq: ContentItem, start: number): ChatResponse {
-  // Use full content — most CNCI FAQs are under 1000 chars, send complete
   const stripped = stripMdx(faq.content);
-  const content = stripped.length > 1500
-    ? stripped.slice(0, 1500).replace(/\s+\S*$/, '') + '\n\nPuedes ver el artículo completo para más detalles.'
-    : stripped;
-
-  return {
-    content,
-    sources: [{
-      title: faq.title,
-      slug: faq.slug,
-      type: faq.type,
-      category: faq.category,
-    }],
-    metadata: {
-      source: 'faq',
-      confidence: 'high',
-      mode: 'help',
-      processingMs: Date.now() - start,
-    },
-    suggestedActions: faq.suggestedActions,
-  };
-}
-
-function buildRetrievalResponse(items: ContentItem[], start: number): ChatResponse {
-  const best = items[0];
-  const stripped = stripMdx(best.content);
-  // Send full content — only truncate if extremely long
   const content = stripped.length > 2000
     ? stripped.slice(0, 2000).replace(/[.!?]\s[^.!?]*$/, '.') + '\n\nConsulta el artículo completo para más información.'
     : stripped;
 
-  const related = items.slice(1).map((item) => ({
-    title: item.title,
-    slug: item.slug,
-    type: item.type,
-    category: item.category,
-  }));
-
   return {
     content,
-    sources: [
-      { title: best.title, slug: best.slug, type: best.type, category: best.category },
-      ...related,
-    ],
-    metadata: {
-      source: 'retrieval',
-      confidence: 'medium',
-      mode: 'help',
-      processingMs: Date.now() - start,
-    },
-    suggestedActions: best.suggestedActions,
+    sources: [{ title: faq.title, slug: faq.slug, type: faq.type, category: faq.category }],
+    metadata: { source: 'faq', confidence: 'high', mode: 'help', processingMs: Date.now() - start },
+    suggestedActions: faq.suggestedActions,
   };
 }
 
 async function buildLLMResponse(
-  req: ChatRequest,
-  context: ContentItem[],
-  start: number,
-  apiKey: string,
+  req: ChatRequest, context: ContentItem[], start: number, apiKey: string,
 ): Promise<ChatResponse> {
-  // Label each source clearly so LLM can cite them
   const contextText = context
     .map((item, i) => `[FUENTE ${i + 1}: ${item.title}]\n${stripMdx(item.content).slice(0, 1000)}`)
     .join('\n\n===\n\n');
@@ -160,7 +159,7 @@ async function buildLLMResponse(
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
-        model: process.env.AI_MODEL || 'claude-haiku-4-5-20251001',
+        model: getConfig('ai_model') || process.env.AI_MODEL || 'claude-haiku-4-5-20251001',
         max_tokens: 300,
         system: `${getSystemPrompt()}
 
@@ -168,65 +167,58 @@ INSTRUCCIONES CRÍTICAS:
 - Solo puedes usar información de las FUENTES proporcionadas abajo
 - Si la respuesta NO está en las fuentes, di "No tengo esa información" y sugiere contactar a Servicios Estudiantiles
 - NUNCA inventes datos, fechas, costos, correos o procesos
-- Cita la fuente cuando respondas (ej: "Según nuestra información sobre [tema]...")
 - Responde en máximo 2-3 oraciones claras
 
 ${contextText}`,
         messages: [
-          ...(req.history || []).slice(-4).map((h) => ({
-            role: h.role,
-            content: h.content.slice(0, 500),
-          })),
+          ...(req.history || []).slice(-4).map((h) => ({ role: h.role, content: h.content.slice(0, 500) })),
           { role: 'user', content: req.message },
         ],
       }),
+      signal: AbortSignal.timeout(10000),
     });
 
     if (!response.ok) throw new Error(`API ${response.status}`);
-
     const data = await response.json();
     const text = data.content?.[0]?.text || '';
 
     return {
       content: text,
-      sources: context.map((item) => ({
-        title: item.title,
-        slug: item.slug,
-        type: item.type,
-        category: item.category,
-      })),
-      metadata: {
-        source: 'llm',
-        confidence: 'medium',
-        mode: req.mode,
-        processingMs: Date.now() - start,
-      },
+      sources: context.map((item) => ({ title: item.title, slug: item.slug, type: item.type, category: item.category })),
+      metadata: { source: 'llm', confidence: 'medium', mode: req.mode, processingMs: Date.now() - start },
       suggestedActions: context[0]?.suggestedActions,
     };
-  } catch (error) {
-    console.error('LLM call failed:', error);
-    return buildRetrievalResponse(context, start);
+  } catch {
+    // LLM failed — return best candidate directly
+    return buildFaqResponse(context[0], start);
   }
 }
 
 function buildFallbackResponse(message: string, start: number): ChatResponse {
   const dept = detectDepartment(message);
-
   return {
-    content: `No encontré información específica sobre tu consulta en nuestra base de conocimientos.\n\nTe recomiendo contactar al área de **${dept.name}** para recibir orientación personalizada:\n📧 ${dept.email}`,
+    content: `No encontré información sobre tu consulta en nuestra base de conocimientos.\n\nTe recomiendo contactar al área de ${dept.name} para orientación personalizada:\n📧 ${dept.email}`,
     sources: [],
-    metadata: {
-      source: 'fallback',
-      confidence: 'low',
-      mode: 'help',
-      processingMs: Date.now() - start,
-    },
+    metadata: { source: 'fallback', confidence: 'low', mode: 'help', processingMs: Date.now() - start },
     suggestedActions: [
       { type: 'email', label: `Escribir a ${dept.name}`, href: `mailto:${dept.email}` },
       { type: 'ticket', label: 'Crear ticket de soporte' },
     ],
     escalationHint: dept.name,
   };
+}
+
+// ── Helpers ─────────────────────────────────────────────────────────
+
+function triggerWorkflows(req: ChatRequest): void {
+  const msg = req.message.toLowerCase();
+  const ctx = req.context || {};
+  if (/pago|beca|factura|costo|mensualidad|descuento|cobro/.test(msg)) {
+    flowPaymentQuestion({ question: req.message, studentName: ctx.studentName, studentEmail: ctx.studentEmail }).catch(() => {});
+  }
+  if (/inscri|registro|nuevo ingreso|quiero estudiar|me interesa|cómo entro/.test(msg)) {
+    flowEnrollmentIntent({ question: req.message, studentName: ctx.studentName, studentEmail: ctx.studentEmail }).catch(() => {});
+  }
 }
 
 function detectDepartment(msg: string): { name: string; email: string } {
@@ -242,11 +234,11 @@ function detectDepartment(msg: string): { name: string; email: string } {
 
 function stripMdx(mdx: string): string {
   return mdx
-    .replace(/^---[\s\S]*?---/m, '')        // Remove frontmatter
-    .replace(/^#{1,6}\s+/gm, '')            // Remove heading markers
-    .replace(/\*\*([^*]+)\*\*/g, '$1')      // Bold → plain
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1 ($2)')  // Links → text (URL preserved)
-    .replace(/^[-*]\s+/gm, '• ')            // Bullets
+    .replace(/^---[\s\S]*?---/m, '')
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1 ($2)')
+    .replace(/^[-*]\s+/gm, '• ')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 }
