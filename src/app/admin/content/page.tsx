@@ -36,6 +36,8 @@ const CATEGORIES = [
 
 export default function AdminContentPage() {
   const [items, setItems] = useState<KnowledgeItem[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(0);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterCat, setFilterCat] = useState('');
@@ -43,17 +45,21 @@ export default function AdminContentPage() {
   const [editing, setEditing] = useState<KnowledgeItem | null>(null);
   const [showImport, setShowImport] = useState(false);
   const [toast, setToast] = useState('');
+  const PAGE_SIZE = 50;
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 3000); };
 
   const loadItems = useCallback(async () => {
     setLoading(true);
-    const url = searchQuery ? `/api/knowledge?q=${encodeURIComponent(searchQuery)}` : '/api/knowledge';
+    const url = searchQuery
+      ? `/api/knowledge?q=${encodeURIComponent(searchQuery)}`
+      : `/api/knowledge?limit=${PAGE_SIZE}&offset=${page * PAGE_SIZE}`;
     const res = await fetch(url);
     const data = await res.json();
     setItems(data.items || []);
+    setTotal(data.total || 0);
     setLoading(false);
-  }, [searchQuery]);
+  }, [searchQuery, page]);
 
   useEffect(() => { loadItems(); }, [loadItems]);
 
@@ -185,6 +191,31 @@ export default function AdminContentPage() {
                 ))}
               </tbody>
             </table>
+          )}
+
+          {/* Pagination */}
+          {total > PAGE_SIZE && !searchQuery && (
+            <div className="flex items-center justify-between px-5 py-3 border-t border-slate-100">
+              <span className="text-xs text-slate-400">
+                {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, total)} de {total}
+              </span>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setPage(Math.max(0, page - 1))}
+                  disabled={page === 0}
+                  className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 disabled:opacity-30"
+                >
+                  Anterior
+                </button>
+                <button
+                  onClick={() => setPage(page + 1)}
+                  disabled={(page + 1) * PAGE_SIZE >= total}
+                  className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 disabled:opacity-30"
+                >
+                  Siguiente
+                </button>
+              </div>
+            </div>
           )}
         </div>
       </div>

@@ -67,9 +67,11 @@ export function getAllDynamic(): ContentItem[] {
   return rows.map(rowToContentItem);
 }
 
-export function getAllDynamicRaw(): KnowledgeRow[] {
+export function getAllDynamicRaw(limit = 50, offset = 0): { items: KnowledgeRow[]; total: number } {
   const db = getDb();
-  return db.prepare('SELECT * FROM knowledge_items ORDER BY updated_at DESC').all() as KnowledgeRow[];
+  const total = (db.prepare('SELECT COUNT(*) as c FROM knowledge_items').get() as any).c;
+  const items = db.prepare('SELECT id, title, slug, category, area, priority, visibility, excerpt, tags, updated_at FROM knowledge_items ORDER BY updated_at DESC LIMIT ? OFFSET ?').all(limit, offset) as KnowledgeRow[];
+  return { items, total };
 }
 
 export function getDynamicById(id: number): KnowledgeRow | null {

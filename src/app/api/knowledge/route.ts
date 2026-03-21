@@ -46,8 +46,10 @@ export async function GET(req: NextRequest) {
     const results = searchDynamic(q);
     return NextResponse.json({ items: results, total: results.length });
   }
-  const items = getAllDynamicRaw();
-  return NextResponse.json({ items, total: items.length });
+  const limit = Math.min(parseInt(req.nextUrl.searchParams.get('limit') || '50'), 200);
+  const offset = Math.max(parseInt(req.nextUrl.searchParams.get('offset') || '0'), 0);
+  const { items, total } = getAllDynamicRaw(limit, offset);
+  return NextResponse.json({ items, total });
 }
 
 export async function POST(req: NextRequest) {
