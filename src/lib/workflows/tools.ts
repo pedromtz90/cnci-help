@@ -1,199 +1,208 @@
 /**
- * Workflow Tools — Actions that Mastra workflows can invoke.
- * Each tool is a pure function: typed input → typed output.
- * Tools are auditable, testable, and reusable.
+ * Workflow Tools — typed, testable, auditable actions.
+ * Each tool does ONE thing. Workflows compose them.
  */
-
-import { createTicket as dbCreateTicket } from '@/lib/tickets/service';
+import { z } from 'zod';
+import { createTicket as dbCreateTicket, updateTicketStatus, getTicketById } from '@/lib/tickets/service';
 import { trackEvent } from '@/lib/analytics/service';
-import { syncTicketToNexus } from '@/lib/nexus/sync';
+import { escalateToNexus } from '@/lib/nexus/sync';
+import { logAudit, getConfig } from '@/lib/settings/service';
+import { recordGap } from '@/lib/knowledge/gaps';
 import { getDb } from '@/lib/db/database';
-import type { CreateTicketRequest, Ticket } from '@/types/content';
+import type { Ticket } from '@/types/content';
+
+// ── Schemas ─────────────────────────────────────────────────────────
+
+export const CaseInputSchema = z.object({
+  studentName: z.string(),
+  studentId: z.string().optional(),    // matrícula
+  studentEmail: z.string().email().optional(),
+  phone: z.string().optional(),
+  subject: z.string(),
+  description: z.string(),
+  category: z.string().optional(),
+  channel: z.enum(['chat', 'help', 'manual', 'email']).default('chat'),
+  chatHistory: z.array(z.object({ role: z.string(), content: z.string() })).optional(),
+});
+
+export type CaseInput = z.infer<typeof CaseInputSchema>;
+
+export const ClassificationSchema = z.object({
+  category: z.enum(['financiera', 'tecnica', 'academica', 'administrativa', 'inscripcion', 'otra']),
+  urgency: z.enum(['critica', 'alta', 'media', 'baja']),
+  summary: z.string(),
+  riskOfDropout: z.boolean(),
+  department: z.string(),
+  isComplete: z.boolean(),
+  missingFields: z.array(z.string()),
+});
+
+export type Classification = z.infer<typeof ClassificationSchema>;
+
+// ── Tool: Validate Input ────────────────────────────────────────────
+
+export function toolValidateInput(input: CaseInput): { valid: boolean; missing: string[] } {
+  const missing: string[] = [];
+  if (!input.studentId) missing.push('matrícula');
+  if (!input.studentEmail) missing.push('email');
+  if (!input.studentName || input.studentName.length < 2) missing.push('nombre');
+  return { valid: missing.length === 0, missing };
+}
+
+// ── Tool: Classify with Claude ──────────────────────────────────────
+
+export async function toolClassifyCase(input: CaseInput): Promise<Classification> {
+  const aiKey = getConfig('ai_api_key') || process.env.AI_API_KEY;
+
+  if (!aiKey) {
+    // Fallback: keyword-based classification
+    return classifyByKeywords(input);
+  }
+
+  try {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': aiKey, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({
+        model: getConfig('ai_model') || 'claude-haiku-4-5-20251001',
+        max_tokens: 200,
+        system: `Clasificas solicitudes de alumnos universitarios. Responde SOLO en JSON con este formato exacto:
+{"category":"financiera|tecnica|academica|administrativa|inscripcion|otra","urgency":"critica|alta|media|baja","summary":"resumen en 1 oración","riskOfDropout":true|false,"department":"nombre del departamento"}
+Reglas: si menciona pago/beca/factura→financiera. Si error/plataforma/blackboard→tecnica. Si calificación/materia/tutor→academica. Si constancia/credencial/tramite→administrativa. Si inscripción/baja→inscripcion. Si dice quiere dejar de estudiar o darse de baja→riskOfDropout:true.`,
+        messages: [{ role: 'user', content: `Alumno: ${input.studentName}\nAsunto: ${input.subject}\nDescripción: ${input.description}` }],
+      }),
+      signal: AbortSignal.timeout(8000),
+    });
+
+    if (!res.ok) return classifyByKeywords(input);
+    const data = await res.json();
+    const text = data.content?.[0]?.text || '';
+    const json = JSON.parse(text);
+
+    return {
+      category: json.category || 'otra',
+      urgency: json.urgency || 'media',
+      summary: json.summary || input.subject,
+      riskOfDropout: !!json.riskOfDropout,
+      department: json.department || 'Servicios Estudiantiles',
+      isComplete: !!input.studentId && !!input.studentEmail,
+      missingFields: toolValidateInput(input).missing,
+    };
+  } catch {
+    return classifyByKeywords(input);
+  }
+}
+
+function classifyByKeywords(input: CaseInput): Classification {
+  const text = `${input.subject} ${input.description}`.toLowerCase();
+  let category: Classification['category'] = 'otra';
+  let department = 'Servicios Estudiantiles';
+  let urgency: Classification['urgency'] = 'media';
+
+  if (/pago|beca|factura|costo|mensualidad|cobro|recibo/.test(text)) { category = 'financiera'; department = 'Cobranza'; }
+  else if (/blackboard|office|error|plataforma|acceso|contraseña|no puedo entrar/.test(text)) { category = 'tecnica'; department = 'Soporte Técnico'; }
+  else if (/calificación|materia|tutor|examen|extraordinario|kardex/.test(text)) { category = 'academica'; department = 'Servicios Estudiantiles'; }
+  else if (/constancia|certificado|credencial|tramite|documento/.test(text)) { category = 'administrativa'; department = 'Servicios Estudiantiles'; }
+  else if (/inscri|baja|cambio.*carrera|registro/.test(text)) { category = 'inscripcion'; department = 'Servicios Estudiantiles'; }
+
+  const riskOfDropout = /baja|dejar de estudiar|ya no quiero|cancelar inscripción/.test(text);
+  if (riskOfDropout) urgency = 'alta';
+
+  const validation = toolValidateInput(input);
+
+  return { category, urgency, summary: input.subject, riskOfDropout, department, isComplete: validation.valid, missingFields: validation.missing };
+}
 
 // ── Tool: Create Ticket ─────────────────────────────────────────────
 
-export interface CreateTicketInput {
-  studentName: string;
-  studentId: string;
-  studentEmail: string;
-  category: string;
-  subject: string;
-  description: string;
-  channel: 'chat' | 'help' | 'manual' | 'email';
-  chatContext?: string;
-  priority?: 'critical' | 'high' | 'medium' | 'low';
-}
-
-export async function toolCreateTicket(input: CreateTicketInput): Promise<{ ticket: Ticket; synced: boolean }> {
+export function toolCreateTicket(input: CaseInput, classification: Classification): Ticket {
   getDb();
-  const ticket = dbCreateTicket(input as CreateTicketRequest);
-
-  trackEvent({
-    type: 'ticket_create',
-    category: input.category,
-    query: input.subject,
-    source: input.channel,
+  return dbCreateTicket({
+    studentName: input.studentName,
+    studentId: input.studentId || '',
+    studentEmail: input.studentEmail || '',
+    category: classification.category,
+    priority: classification.urgency === 'critica' ? 'critical' : classification.urgency === 'alta' ? 'high' : 'medium',
+    subject: classification.summary || input.subject,
+    description: input.description,
+    channel: input.channel,
+    chatContext: input.chatHistory?.map((m) => `${m.role}: ${m.content}`).join('\n'),
   });
-
-  const syncResult = await syncTicketToNexus(ticket);
-  if (syncResult.conversationId) {
-    const db = getDb();
-    db.prepare('UPDATE tickets SET nexus_case_id = ? WHERE id = ?').run(syncResult.conversationId, ticket.id);
-  }
-
-  return { ticket, synced: syncResult.success };
 }
 
-// ── Tool: Send Support Email ────────────────────────────────────────
+// ── Tool: Assign Department ─────────────────────────────────────────
 
-export interface SendEmailInput {
-  to: string;
-  subject: string;
-  body: string;
-  replyTo?: string;
+export function toolAssignDepartment(ticketId: string, department: string): void {
+  getDb();
+  const db = getDb();
+  db.prepare("UPDATE tickets SET department = ?, updated_at = datetime('now') WHERE id = ?").run(department, ticketId);
 }
 
-export async function toolSendEmail(input: SendEmailInput): Promise<{ sent: boolean; error?: string }> {
+// ── Tool: Update Case Status ────────────────────────────────────────
+
+export function toolUpdateCaseStatus(ticketId: string, status: 'open' | 'in_review' | 'waiting_student' | 'resolved' | 'closed'): Ticket | null {
+  getDb();
+  return updateTicketStatus(ticketId, status);
+}
+
+// ── Tool: Send Email ────────────────────────────────────────────────
+
+export async function toolSendEmail(to: string, subject: string, body: string): Promise<boolean> {
   try {
     const nodemailer = await import('nodemailer');
-
-    const smtpHost = process.env.SMTP_HOST;
-    if (!smtpHost) {
-      console.log('[workflow:email] SMTP not configured, logging instead:', input.to, input.subject);
-      return { sent: false, error: 'SMTP not configured' };
-    }
+    const host = getConfig('smtp_host') || process.env.SMTP_HOST;
+    if (!host) { console.log(`[tool:email] SMTP not configured — would send to ${to}: ${subject}`); return false; }
 
     const transporter = nodemailer.createTransport({
-      host: smtpHost,
-      port: parseInt(process.env.SMTP_PORT || '587'),
-      secure: process.env.SMTP_SECURE === 'true',
-      auth: {
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASS,
-      },
+      host,
+      port: parseInt(getConfig('smtp_port') || process.env.SMTP_PORT || '587'),
+      secure: (getConfig('smtp_port') || process.env.SMTP_PORT) === '465',
+      auth: { user: getConfig('smtp_user') || process.env.SMTP_USER, pass: getConfig('smtp_pass') || process.env.SMTP_PASS },
     });
 
     await transporter.sendMail({
-      from: process.env.SMTP_FROM || 'soporte@cncivirtual.mx',
-      to: input.to,
-      subject: input.subject,
-      html: input.body,
-      replyTo: input.replyTo,
+      from: getConfig('smtp_from') || process.env.SMTP_FROM || 'soporte@cncivirtual.mx',
+      to, subject, html: body,
     });
-
-    return { sent: true };
-  } catch (error: any) {
-    console.error('[workflow:email] Failed:', error.message);
-    return { sent: false, error: error.message };
+    return true;
+  } catch (e: any) {
+    console.error(`[tool:email] Failed:`, e.message);
+    return false;
   }
 }
 
-// ── Tool: Escalate to Human ─────────────────────────────────────────
+// ── Tool: Save Audit Log ────────────────────────────────────────────
 
-export interface EscalateInput {
-  ticketId?: string;
-  studentName: string;
-  studentEmail: string;
-  reason: string;
-  department: string;
-  context: string;
+export function toolSaveAuditLog(actor: string, action: string, entityType: string, entityId?: string, details?: string): void {
+  logAudit(actor, action, entityType, entityId, undefined, details);
 }
 
-export async function toolEscalateToHuman(input: EscalateInput): Promise<{ escalated: boolean }> {
-  // Notify staff via email
-  const departmentEmails: Record<string, string> = {
-    'Soporte Técnico': 'soporte@cncivirtual.mx',
-    'Cobranza': 'cobranza@cncivirtual.mx',
-    'Servicios Estudiantiles': 'servicios@cncivirtual.mx',
-    'Titulación': 'titulacion@cncivirtual.mx',
-  };
+// ── Tool: Escalate to Nexus ─────────────────────────────────────────
 
-  const staffEmail = departmentEmails[input.department] || 'servicios@cncivirtual.mx';
-
-  await toolSendEmail({
-    to: staffEmail,
-    subject: `[Escalación] ${input.reason} — ${input.studentName}`,
-    body: `
-      <h3>Escalación de Centro de Ayuda CNCI</h3>
-      <p><strong>Alumno:</strong> ${input.studentName} (${input.studentEmail})</p>
-      <p><strong>Motivo:</strong> ${input.reason}</p>
-      <p><strong>Departamento:</strong> ${input.department}</p>
-      <p><strong>Contexto:</strong></p>
-      <pre>${input.context}</pre>
-      ${input.ticketId ? `<p><a href="${process.env.NEXTAUTH_URL || 'https://ayuda.cncivirtual.mx'}/api/tickets/${input.ticketId}">Ver ticket</a></p>` : ''}
-    `,
-    replyTo: input.studentEmail,
+export async function toolEscalateToNexus(input: CaseInput, classification: Classification): Promise<string | null> {
+  if (!input.studentEmail) return null;
+  const result = await escalateToNexus({
+    studentName: input.studentName,
+    studentEmail: input.studentEmail,
+    studentId: input.studentId,
+    phone: input.phone,
+    subject: `[${classification.urgency.toUpperCase()}] ${classification.summary}`,
+    chatHistory: (input.chatHistory || [{ role: 'user', content: input.description }]) as any,
+    category: classification.category,
   });
-
-  trackEvent({
-    type: 'escalation',
-    category: input.department,
-    query: input.reason,
-  });
-
-  return { escalated: true };
+  return result.conversationId || null;
 }
 
-// ── Tool: Create Lead (enrollment intent) ───────────────────────────
+// ── Tool: Record Knowledge Gap ──────────────────────────────────────
 
-export interface CreateLeadInput {
-  name: string;
-  email: string;
-  phone?: string;
-  program?: string;
-  source: string;
-  notes?: string;
+export function toolRecordGap(question: string): void {
+  getDb();
+  recordGap(question, 'low', 'workflow');
 }
 
-export async function toolCreateLead(input: CreateLeadInput): Promise<{ leadId?: string; synced: boolean }> {
-  // Sync to Nexus as a lead/contact
-  const nexusUrl = process.env.NEXUS_API_URL;
-  const nexusKey = process.env.NEXUS_API_KEY;
+// ── Tool: Track Analytics Event ─────────────────────────────────────
 
-  if (!nexusUrl || !nexusKey) {
-    console.log('[workflow:lead] Nexus not configured, logging lead:', input.name, input.email);
-    trackEvent({ type: 'chat', query: `Lead: ${input.name}`, category: 'inscripcion', source: 'workflow' });
-    return { synced: false };
-  }
-
-  try {
-    const res = await fetch(`${nexusUrl}/api/v1/leads`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${nexusKey}`,
-      },
-      body: JSON.stringify({
-        firstName: input.name.split(' ')[0],
-        lastName: input.name.split(' ').slice(1).join(' ') || '',
-        email: input.email,
-        phone: input.phone,
-        source: 'cnci-help-chatbot',
-        tags: ['cnci-lead', 'enrollment-intent'],
-        notes: `Intención de inscripción detectada desde Centro de Ayuda.\n${input.notes || ''}`,
-      }),
-    });
-
-    const data = await res.json();
-    trackEvent({ type: 'chat', query: `Lead created: ${input.name}`, category: 'inscripcion', source: 'workflow' });
-    return { leadId: data.data?.id, synced: true };
-  } catch (error: any) {
-    console.error('[workflow:lead] Failed:', error.message);
-    return { synced: false };
-  }
-}
-
-// ── Tool: Log Conversation Event ────────────────────────────────────
-
-export interface LogEventInput {
-  type: 'search' | 'chat' | 'article_view' | 'faq_expand' | 'ticket_create' | 'escalation';
-  query?: string;
-  category?: string;
-  confidence?: string;
-  source?: string;
-  resolved?: boolean;
-}
-
-export function toolLogEvent(input: LogEventInput): void {
-  trackEvent(input);
+export function toolTrackEvent(type: string, category: string, query?: string): void {
+  getDb();
+  trackEvent({ type: type as any, category, query, source: 'workflow' });
 }
