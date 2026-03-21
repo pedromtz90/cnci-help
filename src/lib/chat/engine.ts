@@ -1,9 +1,9 @@
 import type { ChatRequest, ChatResponse, ContentItem, SuggestedAction } from '@/types/content';
 import { exactFaqMatch, retrieveForRAG, search } from '@/lib/knowledge/search';
 import { trackEvent } from '@/lib/analytics/service';
-import { flowPaymentQuestion, flowEnrollmentIntent, flowLowConfidence } from '@/lib/workflows/flows';
 import { getDepartmentEmail, getConfig } from '@/lib/settings/service';
 import { recordGap } from '@/lib/knowledge/gaps';
+import { runWorkflow } from '@/lib/workflows/mastra';
 
 /** System prompt — loaded from settings DB so staff can edit it */
 function getSystemPrompt(): string {
@@ -210,14 +210,21 @@ function buildFallbackResponse(message: string, start: number): ChatResponse {
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
+/** Trigger Mastra workflows based on chat context (fire-and-forget) */
 function triggerWorkflows(req: ChatRequest): void {
   const msg = req.message.toLowerCase();
   const ctx = req.context || {};
+  const base = { question: req.message, studentName: ctx.studentName, studentEmail: ctx.studentEmail, phone: ctx.phone };
+
   if (/pago|beca|factura|costo|mensualidad|descuento|cobro/.test(msg)) {
-    flowPaymentQuestion({ question: req.message, studentName: ctx.studentName, studentEmail: ctx.studentEmail }).catch(() => {});
+    runWorkflow('payment', base).catch(() => {});
   }
-  if (/inscri|registro|nuevo ingreso|quiero estudiar|me interesa|cómo entro/.test(msg)) {
-    flowEnrollmentIntent({ question: req.message, studentName: ctx.studentName, studentEmail: ctx.studentEmail }).catch(() => {});
+  if (/inscri|registro|nuevo ingreso|quiero estudiar|me interesa/.test(msg)) {
+    runWorkflow('enrollment', base).catch(() => {});
+  }
+  // No-answer workflow (creates ticket + escalates)
+  if (ctx.studentEmail) {
+    runWorkflow('no-answer', { ...base, chatHistory: req.history, category: 'soporte', confidence: 'low' }).catch(() => {});
   }
 }
 

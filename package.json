@@ -11,6 +11,7 @@
     "kb:validate": "tsx src/lib/knowledge/validate.ts"
   },
   "dependencies": {
+    "@mastra/core": "^1.15.0",
     "better-sqlite3": "^11.7.0",
     "clsx": "^2.1.1",
     "gray-matter": "^4.0.3",
