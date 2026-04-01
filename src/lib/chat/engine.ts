@@ -7,7 +7,12 @@ import { runWorkflow } from '@/lib/workflows/mastra';
 import { detectInjection } from '@/lib/security/injection-detector';
 import { sendToNexusAgent, shouldRouteToNexus } from '@/lib/nexus/agent-tools';
 
-const SYSTEM_PROMPT = `Eres Ana, Ejecutiva de Servicios Estudiantiles de CNCI.
+/**
+ * System prompt is configurable per deployment via the `chatbot_prompt` setting.
+ * If not set, defaults to the CNCI prompt below.
+ * This allows each tenant (PHS, CNCI, Sultana, etc.) to have their own Ana personality.
+ */
+const DEFAULT_SYSTEM_PROMPT = `Eres Ana, Ejecutiva de Servicios Estudiantiles de CNCI.
 Tu objetivo es ayudar a los alumnos de forma clara, amable, resolutiva y con criterio propio.
 Tuteas al alumno. Hablas como persona real, no como robot.
 
@@ -47,6 +52,10 @@ DEPARTAMENTOS:
 - Titulación: titulacion@cncivirtual.mx
 - Tel: 800 681 5314 (opción 4 y 5)
 - Oferta educativa: https://cnci.edu.mx/`;
+
+function getSystemPrompt(): string {
+  return getConfig('chatbot_prompt') || DEFAULT_SYSTEM_PROMPT;
+}
 
 const API_KEY = process.env.AI_API_KEY || process.env.ANTHROPIC_API_KEY || '';
 const AI_MODEL = process.env.AI_MODEL || 'claude-haiku-4-5-20251001';
@@ -153,7 +162,7 @@ export async function processChat(req: ChatRequest): Promise<ChatResponse> {
         body: JSON.stringify({
           model: getConfig('ai_model') || AI_MODEL,
           max_tokens: 400,
-          system: `${SYSTEM_PROMPT}\n\nFUENTES DISPONIBLES:\n${contextText}`,
+          system: `${getSystemPrompt()}\n\nFUENTES DISPONIBLES:\n${contextText}`,
           messages: [
             ...(req.history || []).slice(-8).map((h) => ({ role: h.role, content: h.content.slice(0, 500) })),
             { role: 'user', content: req.message },
