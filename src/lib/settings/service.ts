@@ -1,23 +1,63 @@
 /**
  * Settings Service — Persistent config in SQLite.
- * Secrets are obfuscated at rest (base64 — not crypto-grade, but prevents casual reading).
- * All changes are audit-logged.
+ * Secrets are encrypted at rest with AES-256-GCM when SETTINGS_ENCRYPTION_KEY is set.
+ * Falls back to base64 for backward compatibility with existing rows or when the key
+ * is not configured. All changes are audit-logged.
  */
 import { getDb } from '@/lib/db/database';
-import { createHash } from 'crypto';
+import { createCipheriv, createDecipheriv, randomBytes } from 'crypto';
 
 const SECRET_KEYS = new Set([
   'azure_ad_client_secret', 'smtp_pass', 'nexus_api_key', 'nexus_password', 'ai_api_key',
+  'whatsapp_access_token', 'whatsapp_verify_token',
 ]);
+
+// SETTINGS_ENCRYPTION_KEY must be a 64-character hex string (32 bytes = AES-256).
+// Generate with: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+const ENCRYPTION_KEY = process.env.SETTINGS_ENCRYPTION_KEY
+  ? Buffer.from(process.env.SETTINGS_ENCRYPTION_KEY, 'hex')
+  : null;
+
+function encrypt(text: string): string {
+  if (!ENCRYPTION_KEY) {
+    // Fallback to base64 if no key configured (backward compat)
+    return 'enc:' + Buffer.from(text).toString('base64');
+  }
+  const iv = randomBytes(12);
+  const cipher = createCipheriv('aes-256-gcm', ENCRYPTION_KEY, iv);
+  const encrypted = Buffer.concat([cipher.update(text, 'utf8'), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  // Format: enc:<iv_hex>:<tag_hex>:<ciphertext_hex>
+  return `enc:${iv.toString('hex')}:${tag.toString('hex')}:${encrypted.toString('hex')}`;
+}
+
+function decrypt(data: string): string {
+  if (!data.startsWith('enc:')) {
+    // Unencoded plain value (legacy rows written before this system)
+    return data;
+  }
+  const rest = data.slice(4); // strip "enc:"
+  const parts = rest.split(':');
+  if (parts.length === 3) {
+    // AES-256-GCM format: <iv_hex>:<tag_hex>:<ciphertext_hex>
+    if (!ENCRYPTION_KEY) throw new Error('SETTINGS_ENCRYPTION_KEY required to decrypt');
+    const [ivHex, tagHex, cipherHex] = parts;
+    const decipher = createDecipheriv('aes-256-gcm', ENCRYPTION_KEY, Buffer.from(ivHex, 'hex'));
+    decipher.setAuthTag(Buffer.from(tagHex, 'hex'));
+    return decipher.update(Buffer.from(cipherHex, 'hex')) + decipher.final('utf8');
+  }
+  // Legacy base64 fallback (single segment after "enc:")
+  return Buffer.from(rest, 'base64').toString('utf-8');
+}
 
 function encode(key: string, value: string): string {
   if (!value || !SECRET_KEYS.has(key)) return value;
-  return 'enc:' + Buffer.from(value).toString('base64');
+  return encrypt(value);
 }
 
 function decode(key: string, value: string): string {
   if (!value || !SECRET_KEYS.has(key) || !value.startsWith('enc:')) return value;
-  return Buffer.from(value.slice(4), 'base64').toString('utf-8');
+  return decrypt(value);
 }
 
 // ── Read/Write ──────────────────────────────────────────────────────

@@ -1,231 +1,274 @@
 import type { ChatRequest, ChatResponse, ContentItem, SuggestedAction } from '@/types/content';
-import { exactFaqMatch, retrieveForRAG, search } from '@/lib/knowledge/search';
+import { retrieveForRAG } from '@/lib/knowledge/search';
 import { trackEvent } from '@/lib/analytics/service';
 import { getDepartmentEmail, getConfig } from '@/lib/settings/service';
 import { recordGap } from '@/lib/knowledge/gaps';
 import { runWorkflow } from '@/lib/workflows/mastra';
+import { detectInjection } from '@/lib/security/injection-detector';
+import { sendToNexusAgent, shouldRouteToNexus } from '@/lib/nexus/agent-tools';
 
-/** System prompt — loaded from settings DB so staff can edit it */
-function getSystemPrompt(): string {
-  try {
-    const custom = getConfig('chatbot_prompt');
-    if (custom && custom.length > 20) return custom;
-  } catch {}
-  return `Eres un Ejecutivo de Servicios Estudiantiles de la Universidad Virtual CNCI.
-Responde en español, de forma clara, directa y amable.
-Basa tus respuestas EXCLUSIVAMENTE en el contexto proporcionado.
-NUNCA inventes información. Si no sabes, dilo y sugiere contactar al área correcta.`;
-}
+const SYSTEM_PROMPT = `Eres Ana, Ejecutiva de Servicios Estudiantiles de CNCI.
+Tu objetivo es ayudar a los alumnos de forma clara, amable, resolutiva y con criterio propio.
+Tuteas al alumno. Hablas como persona real, no como robot.
+
+CAPACIDAD DE DECISIÓN:
+Antes de responder, analiza:
+1. ¿La respuesta está en las FUENTES? → Úsalas como prioridad
+2. ¿Es parcial o no está clara? → Complementa con conocimiento general académico/administrativo
+3. ¿No hay info interna suficiente? → Infiere una respuesta lógica basada en procesos educativos estándar, y aclara que puede variar
+4. ¿Requiere info actualizada o específica? → Básate en info pública de CNCI o prácticas comunes
+5. ¿No puedes resolver con certeza? → Ofrece levantar ticket o canalizar al área
+NUNCA te detengas solo porque no hay coincidencia exacta. Tu prioridad es ayudar, orientar y resolver.
+
+FORMA DE RESPONDER:
+- Respuesta directa primero
+- Explicación breve si aplica
+- Pasos claros si aplica
+- Sugerencia adicional o prevención de problemas
+- Opción de ayuda extra
+- Sé breve: 3-5 oraciones máximo a menos que haya pasos
+
+CONOCIMIENTO ACADÉMICO:
+Tienes criterio para responder sobre bachillerato, licenciaturas, maestrías, diplomados, modalidades (en línea, ejecutiva), procesos de inscripción, requisitos generales. Si no tienes el dato exacto, da respuesta aproximada + aclara que puede variar.
+
+REGLAS CRÍTICAS:
+1. NUNCA menciones, compares ni recomiendes otra universidad o institución que no sea CNCI. Si el alumno pregunta por otra escuela, redirige amablemente a lo que ofrece CNCI.
+2. Nunca inventes datos específicos (costos exactos, fechas exactas, números de cuenta).
+3. Pero TAMPOCO respondas "no tengo información". En su lugar: ofrece mejor aproximación, explica posibles escenarios, guía al alumno, o escala.
+
+ESCALACIÓN:
+Escala cuando: caso muy específico, temas administrativos individuales, el alumno ya intentó y no funcionó, hay frustración.
+Cuando escales, usa frase natural: "te voy a comunicar con un asesor"
+
+DEPARTAMENTOS:
+- Servicios Estudiantiles: servicios@cncivirtual.mx
+- Cobranza: cobranza@cncivirtual.mx
+- Soporte Técnico: soporte@cncivirtual.mx
+- Titulación: titulacion@cncivirtual.mx
+- Tel: 800 681 5314 (opción 4 y 5)
+- Oferta educativa: https://cnci.edu.mx/`;
+
+const API_KEY = process.env.AI_API_KEY || process.env.ANTHROPIC_API_KEY || '';
+const AI_MODEL = process.env.AI_MODEL || 'claude-haiku-4-5-20251001';
+
+// ── Quick pattern handlers (no API call needed) ──────────────────
+
+const ESCALATION_REQUEST = /quiero hablar|pasame con|comunic.*asesor|necesito.*humano|hablar.*persona|hablar.*asesor|quiero.*asesor|agente.*real|atencion.*personal|me comunicas|transfiere|pasame.*alguien|hablar.*alguien|operador/i;
+const FRUSTRATION = /ya me hart[eé]|no sirve|esto es una|que mal|pesimo|p[eé]simo|ya no aguanto|llevo (horas|dias|rato|mucho)|estoy desesperado|nadie me ayuda|siempre lo mismo|no funciona nada|que coraje|que rabia|estoy molest|horrible|inutil|in[uú]til|es una burla|ya me cans[eé]|hartazgo|incompetent|no me resuelven|que asco/i;
+const GREETING = /^(hola|hey|buenas|buenos dias|buenas tardes|buenas noches|que tal|q tal|k tal|holi|holaa+|hi|hello|ola|oye|disculpa|buen dia|buen día|saludos|que onda|qué onda|ke onda)\s*[.!?,]*$/i;
+const THANKS = /^(gracias|muchas gracias|thanks|thx|grax|mil gracias|te agradezco|excelente gracias|ok gracias|vale gracias|perfecto gracias)\s*[.!?]*$/i;
+const GOODBYE = /^(adios|adiós|bye|chao|hasta luego|nos vemos|me voy|eso es todo|era todo)\s*[.!?]*$/i;
+const AFFIRMATIVE = /^(si|sí|ok|va|vale|claro|sale|órale|orale|listo|eso|ajá|aja|ya|entendido|perfecto|de acuerdo)\s*[.!?]*$/i;
+
+const INJECTION_SAFE_REPLY =
+  'Solo puedo ayudarte con temas relacionados a los servicios estudiantiles de CNCI.';
 
 /**
- * Main chat pipeline — 4 gates with LLM reranking.
- *
- * The key insight: TF-IDF is good at finding CANDIDATES but bad at picking
- * the RIGHT one. The LLM is good at understanding which FAQ actually answers
- * the question. So we use TF-IDF for retrieval and LLM for selection.
- *
- * Gate 1: Exact title match (0ms, free) — only for perfect matches
- * Gate 2: TF-IDF candidates → LLM rerank → return real FAQ content (300ms, cheap)
- * Gate 3: LLM synthesis when no good FAQ exists (500ms, normal cost)
- * Gate 4: Fallback with department suggestion
+ * Simplified pipeline:
+ * 0. Injection detection (HIGH risk → safe fallback, no API)
+ * 1. Quick patterns (greetings, escalation, frustration) → instant, no API
+ * 2. TF-IDF finds relevant FAQs → send to Claude as context → one single API call
+ * 3. Fallback if no API key or no candidates
  */
 export async function processChat(req: ChatRequest): Promise<ChatResponse> {
   const start = Date.now();
-  const aiKey = getConfig('ai_api_key') || process.env.AI_API_KEY;
+  const trimmed = req.message.trim();
+  const apiKey = getConfig('ai_api_key') || API_KEY;
 
-  // ── Gate 1: Exact title match (aliases + title contains) ──
-  const faqMatch = exactFaqMatch(req.message);
-  if (faqMatch) {
-    // Verify it's a real match, not a false positive
-    const titleWords = faqMatch.title.toLowerCase().split(/\s+/);
-    const queryWords = req.message.toLowerCase().split(/\s+/).filter((w) => w.length > 2);
-    const overlap = queryWords.filter((qw) => titleWords.some((tw) => tw.includes(qw) || qw.includes(tw)));
-
-    if (overlap.length >= Math.max(1, queryWords.length * 0.4)) {
-      trackEvent({ type: 'chat', query: req.message, category: faqMatch.category, confidence: 'high', source: 'faq', resolved: true });
-      return buildFaqResponse(faqMatch, start);
-    }
-    // Low overlap — don't trust the exact match, continue to Gate 2
+  // ── Gate 0: Prompt injection detection ──
+  const injection = detectInjection(trimmed);
+  if (injection.riskLevel === 'high') {
+    console.warn(
+      `[cnci/injection] HIGH-RISK blocked categories=[${injection.matchedCategories.join(', ')}] ` +
+        `message="${trimmed.slice(0, 60)}"`,
+    );
+    trackEvent({ type: 'chat', query: req.message, confidence: 'high', source: 'faq', resolved: true });
+    return {
+      content: INJECTION_SAFE_REPLY,
+      sources: [],
+      metadata: { source: 'faq', confidence: 'high', mode: req.mode, processingMs: Date.now() - start },
+    };
+  }
+  if (injection.isSuspicious) {
+    console.warn(
+      `[cnci/injection] ${injection.riskLevel.toUpperCase()}-RISK flagged (continuing) ` +
+        `categories=[${injection.matchedCategories.join(', ')}] message="${trimmed.slice(0, 60)}"`,
+    );
   }
 
-  // ── Gate 2: TF-IDF candidates + LLM reranking ──
+  // ── Quick patterns (instant, free) ──
+  const quick = handleQuickPattern(trimmed, start);
+  if (quick) {
+    trackEvent({ type: 'chat', query: req.message, confidence: 'high', source: 'faq', resolved: true });
+    return quick;
+  }
+
+  // ── Route to Nexus for service/support requests ──
+  if (shouldRouteToNexus(trimmed)) {
+    try {
+      const nexusResult = await sendToNexusAgent({
+        message: trimmed,
+        customerName: req.context?.studentName,
+        customerEmail: req.context?.studentEmail,
+        channel: 'chat',
+      });
+
+      if (nexusResult.success && nexusResult.response) {
+        trackEvent({ type: 'chat', query: req.message, confidence: 'high', source: 'nexus', resolved: true });
+        return {
+          content: nexusResult.response,
+          sources: [],
+          metadata: {
+            source: 'nexus',
+            confidence: 'high',
+            mode: req.mode,
+            processingMs: Date.now() - start,
+            nexusIntent: nexusResult.intent,
+            nexusData: nexusResult.data,
+          },
+        };
+      }
+    } catch (err) {
+      console.error('[chat] Nexus routing failed, falling back to local:', err);
+    }
+  }
+
+  // ── Retrieve relevant FAQs ──
   const candidates = retrieveForRAG(req.message, 5);
 
-  if (candidates.length > 0 && aiKey) {
-    // Use LLM to pick the BEST candidate (not to generate — to SELECT)
-    const reranked = await rerankWithLLM(req.message, candidates, aiKey);
+  // ── Single LLM call with FAQ context ──
+  if (apiKey) {
+    const contextText = candidates.length > 0
+      ? candidates.map((c, i) => `[FUENTE ${i + 1}: ${c.title}]\n${stripMdx(c.content).slice(0, 800)}`).join('\n\n---\n\n')
+      : 'No se encontraron fuentes relevantes en la base de conocimiento.';
 
-    if (reranked) {
-      trackEvent({ type: 'chat', query: req.message, category: reranked.category, confidence: 'high', source: 'faq', resolved: true });
-      return buildFaqResponse(reranked, start);
+    try {
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model: getConfig('ai_model') || AI_MODEL,
+          max_tokens: 400,
+          system: `${SYSTEM_PROMPT}\n\nFUENTES DISPONIBLES:\n${contextText}`,
+          messages: [
+            ...(req.history || []).slice(-8).map((h) => ({ role: h.role, content: h.content.slice(0, 500) })),
+            { role: 'user', content: req.message },
+          ],
+        }),
+        signal: AbortSignal.timeout(15000),
+      });
+
+      if (!response.ok) throw new Error(`API ${response.status}`);
+      const data = await response.json();
+      const text = (data.content?.[0]?.text || '').trim();
+
+      if (text) {
+        trackEvent({ type: 'chat', query: req.message, confidence: candidates.length > 0 ? 'high' : 'medium', source: 'llm', resolved: true });
+        return {
+          content: text,
+          sources: candidates.slice(0, 2).map((c) => ({ title: c.title, slug: c.slug, type: c.type, category: c.category })),
+          metadata: { source: 'llm', confidence: candidates.length > 0 ? 'high' : 'medium', mode: req.mode, processingMs: Date.now() - start },
+          suggestedActions: candidates[0]?.suggestedActions,
+        };
+      }
+    } catch (err) {
+      console.error('[chat] LLM error:', err);
     }
-
-    // LLM said none of the candidates match — go to synthesis
-    const synthesized = await buildLLMResponse(req, candidates, start, aiKey);
-    trackEvent({ type: 'chat', query: req.message, confidence: 'medium', source: 'llm', resolved: true });
-    return synthesized;
   }
 
-  // No AI key — return best TF-IDF result directly
+  // ── Fallback (no API key or API failed) ──
   if (candidates.length > 0) {
-    trackEvent({ type: 'chat', query: req.message, category: candidates[0].category, confidence: 'medium', source: 'retrieval', resolved: true });
-    return buildFaqResponse(candidates[0], start);
+    const faq = candidates[0];
+    trackEvent({ type: 'chat', query: req.message, category: faq.category, confidence: 'medium', source: 'retrieval', resolved: true });
+    return {
+      content: stripMdx(faq.content).slice(0, 1500),
+      sources: [{ title: faq.title, slug: faq.slug, type: faq.type, category: faq.category }],
+      metadata: { source: 'retrieval', confidence: 'medium', mode: 'help', processingMs: Date.now() - start },
+      suggestedActions: faq.suggestedActions,
+    };
   }
 
-  // ── Gate 4: Fallback ──
   trackEvent({ type: 'chat', query: req.message, confidence: 'low', source: 'fallback', resolved: false });
   recordGap(req.message, 'low', 'fallback');
   triggerWorkflows(req);
   return buildFallbackResponse(req.message, start);
 }
 
-/**
- * LLM Reranker — asks the LLM which FAQ best answers the student's question.
- * Returns the selected FAQ (real content, no hallucination) or null if none match.
- *
- * This is the secret sauce: TF-IDF finds candidates, LLM picks the right one.
- * Cost: ~150 tokens input + ~20 tokens output = ~$0.00005 per query.
- */
-async function rerankWithLLM(query: string, candidates: ContentItem[], apiKey: string): Promise<ContentItem | null> {
-  const options = candidates.map((c, i) =>
-    `${i + 1}. "${c.title}" — ${stripMdx(c.content).slice(0, 150)}`
-  ).join('\n');
+// ── Quick pattern handler ────────────────────────────────────────
 
-  try {
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: getConfig('ai_model') || process.env.AI_MODEL || 'claude-haiku-4-5-20251001',
-        max_tokens: 10,
-        system: `Eres un clasificador. El alumno pregunta algo y tienes ${candidates.length} opciones de FAQ.
-Responde SOLO con el número de la opción que MEJOR responde la pregunta del alumno.
-Si NINGUNA opción es relevante, responde "0".
-Solo responde el número, nada más.`,
-        messages: [
-          { role: 'user', content: `Pregunta del alumno: "${query}"\n\nOpciones:\n${options}` },
-        ],
-      }),
-      signal: AbortSignal.timeout(5000),
-    });
-
-    if (!response.ok) return candidates[0]; // Fallback to first candidate
-
-    const data = await response.json();
-    const text = (data.content?.[0]?.text || '').trim();
-    const choice = parseInt(text);
-
-    if (choice === 0 || isNaN(choice)) return null; // None match
-    if (choice >= 1 && choice <= candidates.length) return candidates[choice - 1];
-    return candidates[0]; // Invalid response, use first
-  } catch {
-    return candidates[0]; // On error, use first TF-IDF result
-  }
-}
-
-// ── Response builders ───────────────────────────────────────────────
-
-function buildFaqResponse(faq: ContentItem, start: number): ChatResponse {
-  const stripped = stripMdx(faq.content);
-  const content = stripped.length > 2000
-    ? stripped.slice(0, 2000).replace(/[.!?]\s[^.!?]*$/, '.') + '\n\nConsulta el artículo completo para más información.'
-    : stripped;
-
-  return {
-    content,
-    sources: [{ title: faq.title, slug: faq.slug, type: faq.type, category: faq.category }],
-    metadata: { source: 'faq', confidence: 'high', mode: 'help', processingMs: Date.now() - start },
-    suggestedActions: faq.suggestedActions,
-  };
-}
-
-async function buildLLMResponse(
-  req: ChatRequest, context: ContentItem[], start: number, apiKey: string,
-): Promise<ChatResponse> {
-  const contextText = context
-    .map((item, i) => `[FUENTE ${i + 1}: ${item.title}]\n${stripMdx(item.content).slice(0, 1000)}`)
-    .join('\n\n===\n\n');
-
-  try {
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: getConfig('ai_model') || process.env.AI_MODEL || 'claude-haiku-4-5-20251001',
-        max_tokens: 300,
-        system: `${getSystemPrompt()}
-
-INSTRUCCIONES CRÍTICAS:
-- Solo puedes usar información de las FUENTES proporcionadas abajo
-- Si la respuesta NO está en las fuentes, di "No tengo esa información" y sugiere contactar a Servicios Estudiantiles
-- NUNCA inventes datos, fechas, costos, correos o procesos
-- Responde en máximo 2-3 oraciones claras
-
-${contextText}`,
-        messages: [
-          ...(req.history || []).slice(-4).map((h) => ({ role: h.role, content: h.content.slice(0, 500) })),
-          { role: 'user', content: req.message },
-        ],
-      }),
-      signal: AbortSignal.timeout(10000),
-    });
-
-    if (!response.ok) throw new Error(`API ${response.status}`);
-    const data = await response.json();
-    const text = data.content?.[0]?.text || '';
-
+function handleQuickPattern(msg: string, start: number): ChatResponse | null {
+  if (ESCALATION_REQUEST.test(msg)) {
     return {
-      content: text,
-      sources: context.map((item) => ({ title: item.title, slug: item.slug, type: item.type, category: item.category })),
-      metadata: { source: 'llm', confidence: 'medium', mode: req.mode, processingMs: Date.now() - start },
-      suggestedActions: context[0]?.suggestedActions,
+      content: 'Claro, con gusto te comunico con un asesor para que te ayude personalmente. Solo necesito unos datos para transferir tu conversación completa.',
+      sources: [],
+      metadata: { source: 'faq', confidence: 'high', mode: 'help', processingMs: Date.now() - start },
+      suggestedActions: [{ type: 'escalate', label: 'Hablar con un asesor' }],
+      escalationHint: 'soporte',
     };
-  } catch {
-    // LLM failed — return best candidate directly
-    return buildFaqResponse(context[0], start);
   }
+  if (FRUSTRATION.test(msg)) {
+    return {
+      content: 'Entiendo tu frustración y lamento mucho la situación. ¿Te parece si te comunico con un asesor directamente? Ellos van a poder darte atención personalizada.',
+      sources: [],
+      metadata: { source: 'faq', confidence: 'high', mode: 'help', processingMs: Date.now() - start },
+      suggestedActions: [
+        { type: 'escalate', label: 'Hablar con un asesor' },
+        { type: 'email', label: 'Escribir a Servicios', href: 'mailto:servicios@cncivirtual.mx' },
+      ],
+      escalationHint: 'soporte',
+    };
+  }
+  if (GREETING.test(msg)) {
+    return {
+      content: '¡Hola! Soy Ana, tu asesora de Servicios Estudiantiles de CNCI. ¿En qué te puedo ayudar? Puedes preguntarme sobre trámites, pagos, plataformas, titulación o cualquier duda que tengas.',
+      sources: [],
+      metadata: { source: 'faq', confidence: 'high', mode: 'help', processingMs: Date.now() - start },
+      suggestedActions: [
+        { type: 'link', label: 'Trámites escolares', href: '/help/tramites' },
+        { type: 'link', label: 'Pagos y cobranza', href: '/help/pagos' },
+        { type: 'link', label: 'Soporte técnico', href: '/help/soporte' },
+      ],
+    };
+  }
+  if (THANKS.test(msg)) {
+    return { content: '¡Con mucho gusto! Si te surge otra duda, aquí estoy para ayudarte. Que tengas un excelente día.', sources: [], metadata: { source: 'faq', confidence: 'high', mode: 'help', processingMs: Date.now() - start } };
+  }
+  if (GOODBYE.test(msg)) {
+    return { content: '¡Hasta luego! Fue un gusto ayudarte. Recuerda que puedes regresar cuando necesites.', sources: [], metadata: { source: 'faq', confidence: 'high', mode: 'help', processingMs: Date.now() - start } };
+  }
+  if (AFFIRMATIVE.test(msg)) {
+    return { content: '¡Perfecto! ¿Hay algo más en lo que te pueda ayudar?', sources: [], metadata: { source: 'faq', confidence: 'high', mode: 'help', processingMs: Date.now() - start } };
+  }
+  return null;
 }
+
+// ── Helpers ──────────────────────────────────────────────────────
 
 function buildFallbackResponse(message: string, start: number): ChatResponse {
   const dept = detectDepartment(message);
   return {
-    content: `No encontré información sobre tu consulta en nuestra base de conocimientos.\n\nTe recomiendo contactar al área de ${dept.name} para orientación personalizada:\n📧 ${dept.email}`,
+    content: `No encontré información exacta sobre eso, pero no te preocupes. ¿Quieres que te comunique con un asesor de ${dept.name}? También puedes escribirles a ${dept.email}`,
     sources: [],
     metadata: { source: 'fallback', confidence: 'low', mode: 'help', processingMs: Date.now() - start },
     suggestedActions: [
+      { type: 'escalate', label: 'Hablar con un asesor' },
       { type: 'email', label: `Escribir a ${dept.name}`, href: `mailto:${dept.email}` },
-      { type: 'ticket', label: 'Crear ticket de soporte' },
     ],
     escalationHint: dept.name,
   };
 }
 
-// ── Helpers ─────────────────────────────────────────────────────────
-
-/** Trigger Mastra workflows based on chat context (fire-and-forget) */
 function triggerWorkflows(req: ChatRequest): void {
   const msg = req.message.toLowerCase();
   const ctx = req.context || {};
   const base = { question: req.message, studentName: ctx.studentName, studentEmail: ctx.studentEmail, phone: ctx.phone };
-
-  if (/pago|beca|factura|costo|mensualidad|descuento|cobro/.test(msg)) {
-    runWorkflow('payment', base).catch(() => {});
-  }
-  if (/inscri|registro|nuevo ingreso|quiero estudiar|me interesa/.test(msg)) {
-    runWorkflow('enrollment', base).catch(() => {});
-  }
-  // No-answer workflow (creates ticket + escalates)
-  if (ctx.studentEmail) {
-    runWorkflow('no-answer', { ...base, chatHistory: req.history, category: 'soporte', confidence: 'low' }).catch(() => {});
-  }
+  if (/pago|beca|factura|costo|mensualidad|descuento|cobro/.test(msg)) runWorkflow('payment', base).catch((err) => console.error('[workflow:payment] Failed:', err.message));
+  if (/inscri|registro|nuevo ingreso|quiero estudiar|me interesa/.test(msg)) runWorkflow('enrollment', base).catch((err) => console.error('[workflow:enrollment] Failed:', err.message));
+  if (ctx.studentEmail) runWorkflow('no-answer', { ...base, chatHistory: req.history, category: 'soporte', confidence: 'low' }).catch((err) => console.error('[workflow:no-answer] Failed:', err.message));
 }
 
 function detectDepartment(msg: string): { name: string; email: string } {
