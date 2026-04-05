@@ -22,7 +22,7 @@ export function HeroSearch() {
           ¿Cómo podemos ayudarte?
         </h1>
         <p className="text-blue-100 text-base md:text-lg mb-10 opacity-90 font-light px-4">
-          Busca tutoriales, procesos de titulación, becas y más.
+          Encuentra respuestas sobre plataformas, constancias, titulación y servicios universitarios
         </p>
 
         <form onSubmit={handleSubmit} className="max-w-2xl mx-auto relative px-2">

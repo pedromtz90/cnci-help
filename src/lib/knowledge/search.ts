@@ -248,11 +248,18 @@ export function retrieveForRAG(query: string, limit = 5): ContentItem[] {
   const queryStems = stemTokens(tokenize(query));
   if (queryStems.length === 0) return [];
 
-  return indexedDocs
+  const scored = indexedDocs
     .map((doc) => ({ doc, score: scoreDocument(doc, queryStems) }))
     .filter((s) => s.score > 0)
     .sort((a, b) => b.score - a.score)
-    .slice(0, limit)
+    .slice(0, limit);
+
+  if (scored.length === 0) return [];
+
+  // Filter out weak candidates: keep only those with at least 20% of the top score
+  const topScore = scored[0].score;
+  return scored
+    .filter((s) => s.score >= topScore * 0.2)
     .map((s) => s.doc.item);
 }
 

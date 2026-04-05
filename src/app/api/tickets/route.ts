@@ -6,6 +6,26 @@ import { syncTicketToNexus } from '@/lib/nexus/sync';
 import { getDb } from '@/lib/db/database';
 import { requireAuth, AuthError } from '@/lib/auth/session';
 
+const ticketRateLimit = new Map<string, number[]>();
+const TICKET_LIMIT = 5; // 5 tickets per minute per IP
+const TICKET_WINDOW = 60_000;
+
+function checkTicketRateLimit(ip: string): boolean {
+  const now = Date.now();
+  const timestamps = ticketRateLimit.get(ip) || [];
+  const recent = timestamps.filter(t => now - t < TICKET_WINDOW);
+  if (recent.length >= TICKET_LIMIT) return false;
+  recent.push(now);
+  ticketRateLimit.set(ip, recent);
+  // Cleanup
+  if (ticketRateLimit.size > 10000) {
+    for (const [key, val] of ticketRateLimit) {
+      if (val.every(t => now - t > TICKET_WINDOW)) ticketRateLimit.delete(key);
+    }
+  }
+  return true;
+}
+
 const CreateTicketSchema = z.object({
   studentName: z.string().min(2).max(200),
   studentId: z.string().min(1).max(50),
@@ -21,6 +41,11 @@ const CreateTicketSchema = z.object({
 });
 
 export async function POST(req: NextRequest) {
+  const ip = req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip') || 'unknown';
+  if (!checkTicketRateLimit(ip)) {
+    return NextResponse.json({ error: 'Demasiadas solicitudes. Intenta de nuevo en un minuto.' }, { status: 429 });
+  }
+
   let body: z.infer<typeof CreateTicketSchema>;
   try {
     body = CreateTicketSchema.parse(await req.json());

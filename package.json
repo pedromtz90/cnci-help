@@ -12,6 +12,8 @@
   },
   "dependencies": {
     "@mastra/core": "^1.15.0",
+    "@types/bcryptjs": "^2.4.6",
+    "bcryptjs": "^3.0.3",
     "better-sqlite3": "^11.7.0",
     "clsx": "^2.1.1",
     "gray-matter": "^4.0.3",

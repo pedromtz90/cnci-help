@@ -57,7 +57,7 @@ export interface ChatResponse {
   content: string;
   sources?: ChatSource[];
   metadata: {
-    source: 'faq' | 'retrieval' | 'llm' | 'fallback';
+    source: 'faq' | 'retrieval' | 'llm' | 'fallback' | 'clarification';
     confidence: 'high' | 'medium' | 'low';
     mode: string;
     processingMs: number;

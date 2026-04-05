@@ -1,4 +1,5 @@
 import type { NextAuthOptions } from 'next-auth';
+import { compare } from 'bcryptjs';
 import { getStaffEmails, getDirectorEmails, getConfig } from '@/lib/settings/service';
 import { getDb } from '@/lib/db/database';
 
@@ -50,13 +51,21 @@ export const authOptions: NextAuthOptions = {
       async authorize(credentials) {
         if (!credentials?.email || !credentials?.password) return null;
         const adminEmail = process.env.ADMIN_EMAIL;
-        const adminPassword = process.env.ADMIN_PASSWORD;
-        if (!adminEmail || !adminPassword) return null; // Credentials auth disabled without env vars
-        if (
-          credentials.email === adminEmail &&
-          credentials.password === adminPassword
-        ) {
-          return { id: 'admin-local', name: 'Administrador CNCI', email: credentials.email };
+        if (!adminEmail) return null; // Credentials auth disabled without env vars
+        const adminPasswordHash = process.env.ADMIN_PASSWORD_HASH;
+        if (adminPasswordHash) {
+          const isValid = await compare(credentials.password, adminPasswordHash);
+          if (credentials.email === adminEmail && isValid) {
+            return { id: 'admin-local', name: 'Administrador CNCI', email: credentials.email };
+          }
+        } else {
+          // Fallback: direct comparison for backward compat (log warning)
+          console.warn('ADMIN_PASSWORD_HASH not set, using plaintext comparison (INSECURE)');
+          const adminPassword = process.env.ADMIN_PASSWORD;
+          if (!adminPassword) return null;
+          if (credentials.email === adminEmail && credentials.password === adminPassword) {
+            return { id: 'admin-local', name: 'Administrador CNCI', email: credentials.email };
+          }
         }
         return null;
       },

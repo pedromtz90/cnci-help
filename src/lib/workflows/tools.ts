@@ -88,7 +88,8 @@ Reglas: si menciona pago/beca/factura→financiera. Si error/plataforma/blackboa
       isComplete: !!input.studentId && !!input.studentEmail,
       missingFields: toolValidateInput(input).missing,
     };
-  } catch {
+  } catch (e: any) {
+    console.error('[tool:classify] Claude classification failed, falling back to keywords:', e.message);
     return classifyByKeywords(input);
   }
 }

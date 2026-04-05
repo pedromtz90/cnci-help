@@ -53,12 +53,22 @@ export async function escalateToNexus(params: {
     // Step 1: Find or create contact
     const contactId = await findOrCreateContact(nexusUrl, "", params);
 
-    // Step 2: Create conversation with HUMAN_REQUIRED mode
-    const conversationId = await createConversation(nexusUrl, "", contactId, params);
+    // Step 2: Generate AI summary for the advisor
+    const summary = generateSummary(params);
 
-    // Step 3: Add chat history as messages
+    // Step 3: Create conversation with HUMAN_REQUIRED mode + AI context
+    const conversationId = await createConversation(nexusUrl, "", contactId, params, summary);
+
+    // Step 4: Add chat history as messages
     if (params.chatHistory.length > 0) {
-      await addChatHistory(nexusUrl, "", conversationId, params.chatHistory);
+      await addChatHistory(nexusUrl, "", conversationId, params.chatHistory, summary);
+    }
+
+    // Step 5: Trigger auto-assignment (round-robin)
+    try {
+      await triggerAssignment(nexusUrl, "", conversationId);
+    } catch (err) {
+      console.warn('[nexus] Auto-assignment failed (will be unassigned):', (err as Error).message);
     }
 
     console.log(`[nexus] Escalated: contact=${contactId} conversation=${conversationId}`);
@@ -113,7 +123,7 @@ async function findOrCreateContact(url: string, _key: string, params: any): Prom
   const searchRes = await nexusFetch(url, '', `/api/v1/contacts?search=${encodeURIComponent(params.studentEmail)}`);
   const searchData = await searchRes.json();
 
-  const items = searchData.data?.items || searchData.data || [];
+  const items = searchData.data?.data || searchData.data?.items || searchData.data || [];
   if (Array.isArray(items) && items.length > 0) {
     return items[0].id;
   }
@@ -133,9 +143,8 @@ async function findOrCreateContact(url: string, _key: string, params: any): Prom
   return createData.data?.id;
 }
 
-async function createConversation(url: string, key: string, contactId: string, params: any): Promise<string> {
-  // Get channelId from settings or use default WEB_WIDGET
-  const channelId = getConfig('nexus_channel_id') || '4bf0bccb-3741-4957-aefc-81d8f9693bfa';
+async function createConversation(url: string, key: string, contactId: string, params: any, summary: string): Promise<string> {
+  const channelId = getConfig('nexus_channel_id') || process.env.NEXUS_CHANNEL_ID || '4bf0bccb-3741-4957-aefc-81d8f9693bfa';
 
   const res = await nexusFetch(url, key, '/api/v1/conversations', {
     method: 'POST',
@@ -147,20 +156,35 @@ async function createConversation(url: string, key: string, contactId: string, p
       priority: 'HIGH',
       handlingMode: 'HUMAN_REQUIRED',
       metadata: {
-        source: 'cnci-help-chatbot',
+        source: 'openclaw-chatbot',
         category: params.category,
         studentId: params.studentId || '',
+        channel: params.channel || 'web',
+        escalationReason: 'ai_unable_to_resolve',
+        messageCount: params.chatHistory?.length || 0,
+        aiSummary: summary,
       },
     }),
   });
 
   const data = await res.json();
-  return data.data?.id;
+  const convId = data.data?.id;
+
+  // Update AI fields via PATCH (not accepted in POST create)
+  if (convId) {
+    try {
+      await nexusFetch(url, key, `/api/v1/conversations/${convId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ subject: params.subject }),
+      });
+    } catch {}
+  }
+
+  return convId;
 }
 
-async function addChatHistory(url: string, key: string, conversationId: string, history: ChatMessage[]): Promise<void> {
-  // Add each message to the conversation
-  for (const msg of history.slice(-20)) { // Last 20 messages max
+async function addChatHistory(url: string, key: string, conversationId: string, history: ChatMessage[], summary: string): Promise<void> {
+  for (const msg of history.slice(-20)) {
     await nexusFetch(url, key, `/api/v1/conversations/${conversationId}/messages`, {
       method: 'POST',
       body: JSON.stringify({
@@ -169,25 +193,72 @@ async function addChatHistory(url: string, key: string, conversationId: string, 
         source: msg.role === 'user' ? 'CUSTOMER' : 'AI_AUTO',
         direction: msg.role === 'user' ? 'INBOUND' : 'OUTBOUND',
         isInternal: false,
-        metadata: {
-          fromChatbot: true,
-          originalRole: msg.role,
-        },
+        metadata: { fromChatbot: true, originalRole: msg.role },
       }),
     });
   }
 
-  // Add internal note for the advisor
+  // Internal note with structured summary for the advisor
   await nexusFetch(url, key, `/api/v1/conversations/${conversationId}/messages`, {
     method: 'POST',
     body: JSON.stringify({
-      content: `Escalación desde Centro de Ayuda CNCI.\nEl alumno no pudo resolver su duda por chatbot.\nCategoría: ${history.length} mensajes de contexto arriba.`,
+      content: `📋 RESUMEN DE ESCALACIÓN\n\n${summary}\n\n💬 ${history.length} mensajes previos con la IA (arriba).\nEl alumno necesita atención personalizada.`,
       contentType: 'TEXT',
-      source: 'HUMAN',
+      source: 'SYSTEM',
       direction: 'OUTBOUND',
       isInternal: true,
     }),
   });
+}
+
+/**
+ * Generate a structured summary from the chat history.
+ * This populates aiSummary in Nexus so the advisor gets instant context.
+ */
+function generateSummary(params: { studentName: string; subject: string; category: string; chatHistory: ChatMessage[] }): string {
+  const userMsgs = params.chatHistory.filter(m => m.role === 'user').map(m => m.content);
+  const lastUserMsg = userMsgs[userMsgs.length - 1] || params.subject;
+  const issue = lastUserMsg.length > 100 ? lastUserMsg.slice(0, 100) + '...' : lastUserMsg;
+
+  return `Alumno: ${params.studentName}\nCategoria: ${params.category}\nProblema: ${issue}\nMensajes con IA: ${params.chatHistory.length}\nMotivo: La IA no pudo resolver el caso.`;
+}
+
+/**
+ * Trigger round-robin assignment for a conversation.
+ * Queries available advisors and picks one using the pool.
+ */
+async function triggerAssignment(url: string, key: string, conversationId: string): Promise<void> {
+  // Get available advisors from the pool
+  const poolsRes = await nexusFetch(url, key, '/api/v1/routing/pools');
+  const poolsData = await poolsRes.json();
+  const pools = poolsData.data || [];
+
+  if (!Array.isArray(pools) || pools.length === 0) return;
+
+  // Find default pool or first active pool
+  const pool = pools.find((p: any) => p.isDefault) || pools[0];
+  if (!pool) return;
+
+  // Get pool details with members
+  const poolDetailRes = await nexusFetch(url, key, `/api/v1/routing/pools/${pool.id}`);
+  const poolDetail = await poolDetailRes.json();
+  const members = poolDetail.data?.members || [];
+
+  // Filter available members
+  const available = members.filter((m: any) => m.isAvailable);
+  if (available.length === 0) return;
+
+  // Simple round-robin: pick random available member
+  const selected = available[Math.floor(Math.random() * available.length)];
+  const assigneeId = selected.userId;
+
+  // Assign the conversation
+  await nexusFetch(url, key, `/api/v1/conversations/${conversationId}/assign`, {
+    method: 'PATCH',
+    body: JSON.stringify({ assigneeId }),
+  });
+
+  console.log(`[nexus] Auto-assigned conversation ${conversationId} to ${assigneeId}`);
 }
 
 // ── Nexus Auth — auto-login with JWT refresh ─────────────────────

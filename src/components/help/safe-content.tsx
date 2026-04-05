@@ -1,6 +1,20 @@
 /**
  * Safe markdown-to-HTML renderer.
  * Converts markdown content to HTML with sanitization — no XSS risk.
+ *
+ * SEC-M4: Defense-in-depth sanitization added below.
+ * The pipeline is:
+ *   1. markdownToSafeHtml — escapes all raw input via escapeHtml(), only
+ *      emits known-safe tags from ALLOWED_TAGS.
+ *   2. stripDisallowedTags — strips any tag that is not in ALLOWED_TAGS as a
+ *      belt-and-suspenders pass before dangerouslySetInnerHTML.
+ *
+ * For client-only rendering, additionally install DOMPurify:
+ *   npm install dompurify
+ *   npm install --save-dev @types/dompurify
+ * Then replace the sanitize call below with:
+ *   import DOMPurify from 'dompurify';
+ *   const clean = DOMPurify.sanitize(html, { ALLOWED_TAGS: [...ALLOWED_TAGS], ALLOWED_ATTR: ['href','class','target','rel'] });
  */
 
 const ALLOWED_TAGS = new Set([
@@ -87,12 +101,43 @@ function inlineFormat(text: string): string {
   return safe;
 }
 
+/**
+ * Belt-and-suspenders: strip any HTML tag that is not in ALLOWED_TAGS.
+ * This runs after markdownToSafeHtml so that even if a future code change
+ * inadvertently emits an unlisted tag, it is removed before rendering.
+ * Attributes are also filtered to the safe set: href, class, target, rel.
+ */
+const ALLOWED_ATTRS = new Set(['href', 'class', 'target', 'rel']);
+
+function stripDisallowedTags(html: string): string {
+  // Remove opening tags that are not in ALLOWED_TAGS (keep their inner text)
+  let safe = html.replace(/<\/?([a-zA-Z][a-zA-Z0-9]*)\b([^>]*)>/g, (match, tag, attrs) => {
+    const lower = tag.toLowerCase() as string;
+    if (!ALLOWED_TAGS.has(lower)) {
+      return ''; // strip unknown tag entirely
+    }
+    // Filter attributes to the safe list
+    const filteredAttrs = attrs.replace(/([a-zA-Z-]+)\s*=\s*(?:"[^"]*"|'[^']*'|\S+)/g, (attrMatch: string, attrName: string) => {
+      return ALLOWED_ATTRS.has(attrName.toLowerCase()) ? attrMatch : '';
+    });
+    // Reconstruct tag without the closing slash variant (closing tags have no attrs anyway)
+    return match.startsWith('</') ? `</${lower}>` : `<${lower}${filteredAttrs}>`;
+  });
+
+  // Remove any javascript: or data: URIs that may appear in href values
+  safe = safe.replace(/href\s*=\s*"(?:javascript|data):[^"]*"/gi, 'href="#"');
+  safe = safe.replace(/href\s*=\s*'(?:javascript|data):[^']*'/gi, "href='#'");
+
+  return safe;
+}
+
 interface SafeContentProps {
   content: string;
   className?: string;
 }
 
 export function SafeContent({ content, className }: SafeContentProps) {
-  const html = markdownToSafeHtml(content);
-  return <div className={className} dangerouslySetInnerHTML={{ __html: html }} />;
+  const rawHtml = markdownToSafeHtml(content);
+  const safeHtml = stripDisallowedTags(rawHtml);
+  return <div className={className} dangerouslySetInnerHTML={{ __html: safeHtml }} />;
 }

@@ -42,15 +42,85 @@ export function ChatWidget() {
     setLoading(true);
     try {
       const history: ChatHistoryItem[] = messages.slice(-8).map((m) => ({ role: m.role, content: m.content }));
+
+      // Try streaming first
       const res = await fetch('/api/chat', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text.trim(), mode: 'help', locale: 'es', history }),
+        body: JSON.stringify({ message: text.trim(), mode: 'help', locale: 'es', history, stream: true }),
       });
-      const data: ChatResponse = await res.json();
-      setMessages((prev) => [...prev, { role: 'assistant', content: data.content, metadata: data.metadata, sources: data.sources, suggestedActions: data.suggestedActions }]);
+
+      if (res.headers.get('content-type')?.includes('text/event-stream') && res.body) {
+        // Streaming mode — show text as it arrives
+        const placeholder: Message = { role: 'assistant', content: '' };
+        setMessages((prev) => [...prev, placeholder]);
+        setLoading(false);
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let finalData: ChatResponse | null = null;
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed.startsWith('data: ')) continue;
+            try {
+              const event = JSON.parse(trimmed.slice(6));
+              if (event.type === 'delta' && event.text) {
+                setMessages((prev) => {
+                  const updated = [...prev];
+                  const last = updated[updated.length - 1];
+                  if (last && last.role === 'assistant') {
+                    updated[updated.length - 1] = { ...last, content: last.content + event.text };
+                  }
+                  return updated;
+                });
+              } else if (event.type === 'done') {
+                finalData = event;
+              } else if (event.type === 'error') {
+                setMessages((prev) => {
+                  const updated = [...prev];
+                  updated[updated.length - 1] = { role: 'assistant', content: event.content || 'Error. Intenta de nuevo.' };
+                  return updated;
+                });
+              }
+            } catch {}
+          }
+        }
+
+        // Apply metadata from final event
+        if (finalData) {
+          setMessages((prev) => {
+            const updated = [...prev];
+            const last = updated[updated.length - 1];
+            if (last && last.role === 'assistant') {
+              updated[updated.length - 1] = {
+                ...last,
+                metadata: (finalData as any).metadata,
+                sources: (finalData as any).sources,
+                suggestedActions: (finalData as any).suggestedActions,
+              };
+            }
+            return updated;
+          });
+        }
+      } else {
+        // Non-streaming fallback
+        const data: ChatResponse = await res.json();
+        setMessages((prev) => [...prev, { role: 'assistant', content: data.content, metadata: data.metadata, sources: data.sources, suggestedActions: data.suggestedActions }]);
+        setLoading(false);
+      }
     } catch {
       setMessages((prev) => [...prev, { role: 'assistant', content: 'Ocurrió un error. Intenta de nuevo.' }]);
-    } finally { setLoading(false); }
+      setLoading(false);
+    }
   }, [loading, messages]);
 
   return (
@@ -78,8 +148,8 @@ export function ChatWidget() {
                 <GraduationCap size={20} className="text-white" />
               </div>
               <div className="flex-1">
-                <h4 className="text-white font-bold text-sm">Asistente CNCI</h4>
-                <p className="text-blue-200/70 text-[10px]">Servicios Estudiantiles</p>
+                <h4 className="text-white font-bold text-sm">Ana - CNCI</h4>
+                <p className="text-blue-200/70 text-[10px]">Asesora de Servicios Estudiantiles</p>
               </div>
               <button onClick={() => setIsOpen(false)} className="text-white/50 hover:text-white sm:hidden transition-colors">
                 <X size={18} />
@@ -91,8 +161,8 @@ export function ChatWidget() {
               {messages.length === 0 && (
                 <>
                   <div className="bg-slate-100 rounded-2xl rounded-tl-md px-4 py-3 max-w-[85%] text-sm text-slate-700 leading-relaxed">
-                    <p className="font-semibold text-slate-800 mb-1">¡Hola!</p>
-                    <p>Soy el asistente del Centro de Ayuda CNCI. ¿En qué te puedo orientar?</p>
+                    <p className="font-semibold text-slate-800 mb-1">¡Hola! Soy Ana</p>
+                    <p>Tu asesora de Servicios Estudiantiles de CNCI. ¿En qué te puedo ayudar hoy?</p>
                   </div>
                   <div className="flex flex-wrap gap-2">
                     {SUGGESTIONS.map((s) => (
@@ -122,10 +192,16 @@ export function ChatWidget() {
                       )}
                       {msg.suggestedActions && msg.suggestedActions.length > 0 && (
                         <div className="flex flex-wrap gap-1.5">
-                          {msg.suggestedActions.slice(0, 2).map((a, j) => (
-                            <a key={j} href={a.href || '#'} target={a.href?.startsWith('http') ? '_blank' : undefined} className="text-[10px] font-bold text-blue-600 bg-blue-50 hover:bg-blue-100 px-2.5 py-1 rounded-lg border border-blue-100 transition-colors">
-                              {a.label}
-                            </a>
+                          {msg.suggestedActions.slice(0, 3).map((a, j) => (
+                            a.type === 'escalate' ? (
+                              <button key={j} onClick={() => setShowEscalate(true)} className="text-[10px] font-bold text-white bg-blue-600 hover:bg-blue-700 px-2.5 py-1 rounded-lg transition-colors flex items-center gap-1">
+                                <UserCheck size={10} /> {a.label}
+                              </button>
+                            ) : (
+                              <a key={j} href={a.href || '#'} target={a.href?.startsWith('http') ? '_blank' : undefined} className="text-[10px] font-bold text-blue-600 bg-blue-50 hover:bg-blue-100 px-2.5 py-1 rounded-lg border border-blue-100 transition-colors">
+                                {a.label}
+                              </a>
+                            )
                           ))}
                         </div>
                       )}
@@ -136,7 +212,7 @@ export function ChatWidget() {
 
               {loading && (
                 <div className="flex items-center gap-2 text-slate-400 text-xs">
-                  <Loader2 size={14} className="animate-spin" /> Buscando respuesta...
+                  <Loader2 size={14} className="animate-spin" /> Ana está escribiendo...
                 </div>
               )}
               <div ref={endRef} />
@@ -179,7 +255,7 @@ export function ChatWidget() {
 
             {/* Input area */}
             <div className="border-t border-slate-100 p-4 shrink-0 bg-white">
-              {messages.length > 0 && !showTicketForm && !showEscalate && (
+              {messages.length > 0 && !showTicketForm && !showEscalate && messages.some(m => m.suggestedActions?.some(a => a.type === 'escalate')) && (
                 <div className="flex gap-2 mb-3">
                   <button onClick={() => setShowEscalate(true)} className="text-[11px] font-bold text-white bg-blue-600 px-3 py-1.5 rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-1">
                     <UserCheck size={11} /> Hablar con asesor

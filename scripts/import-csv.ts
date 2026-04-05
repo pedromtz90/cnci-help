@@ -221,11 +221,11 @@ function main() {
 
   for (const row of rows) {
     const question = row['Pregunta'] || '';
-    const answerHtml = row['Respuesta (HTML)'] || '';
+    const answerHtml = row['Respuesta (HTML)'] || row['Respuesta'] || '';
     const categoryRaw = row['Categoria'] || row['Categoría'] || '';
     const area = row['Area'] || row['Área'] || '';
-    const videoUrl = row['URL Youtube'] || '';
-    const imageUrl = row['URL Imagen'] || '';
+    const videoUrl = row['URL Youtube'] || row['URL_Youtube'] || '';
+    const imageUrl = row['URL Imagen'] || row['URL_Imagen'] || '';
 
     if (!question.trim() || !answerHtml.trim()) {
       skipped++;
