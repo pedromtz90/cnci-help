@@ -50,7 +50,7 @@ export default function TrainingPage() {
       const data = await res.json();
       setGaps(data.items || []);
       setTotal(data.total || 0);
-    } catch { setGaps([]); }
+    } catch (err) { console.error('[training] Failed to load gaps:', err); setGaps([]); }
     setLoading(false);
   }, [filter]);
 

@@ -98,7 +98,8 @@ function rebuildIndex(): void {
   try {
     const dynamicContent = getAllDynamic();
     contentCache = [...staticContent, ...dynamicContent];
-  } catch {
+  } catch (err) {
+    console.error('[search] Failed to load dynamic content, using static only:', err);
     contentCache = [...staticContent];
   }
 
@@ -132,7 +133,9 @@ function ensureFreshIndex(): void {
   if (!contentCache) return;
   try {
     if (getIndexVersion() !== lastIndexVersion) rebuildIndex();
-  } catch {}
+  } catch (err) {
+    console.error('[search] Index freshness check failed:', err);
+  }
 }
 
 // ── Scoring ─────────────────────────────────────────────────────────

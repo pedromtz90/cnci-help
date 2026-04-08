@@ -57,10 +57,12 @@ export interface ChatResponse {
   content: string;
   sources?: ChatSource[];
   metadata: {
-    source: 'faq' | 'retrieval' | 'llm' | 'fallback' | 'clarification';
+    source: 'faq' | 'retrieval' | 'llm' | 'fallback' | 'clarification' | 'nexus';
     confidence: 'high' | 'medium' | 'low';
     mode: string;
     processingMs: number;
+    nexusIntent?: string;
+    nexusData?: Record<string, unknown>;
   };
   suggestedActions?: SuggestedAction[];
   escalationHint?: string;

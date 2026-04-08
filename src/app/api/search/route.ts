@@ -35,7 +35,9 @@ export async function GET(req: NextRequest) {
   try {
     getDb();
     trackEvent({ type: 'search', query: q, category: category || undefined });
-  } catch {}
+  } catch (err) {
+    console.error('[search] Failed to track search event:', err);
+  }
 
   return NextResponse.json({ results, query: q });
 }

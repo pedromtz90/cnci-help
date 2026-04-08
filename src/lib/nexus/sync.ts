@@ -177,7 +177,9 @@ async function createConversation(url: string, key: string, contactId: string, p
         method: 'PATCH',
         body: JSON.stringify({ subject: params.subject }),
       });
-    } catch {}
+    } catch (err) {
+      console.error('[nexus] PATCH conversation subject failed:', err);
+    }
   }
 
   return convId;

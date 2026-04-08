@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { createHmac } from 'crypto';
 import { processChat } from '@/lib/chat/engine';
 import { getConfig } from '@/lib/settings/service';
 
@@ -18,7 +19,30 @@ export async function GET(req: NextRequest) {
 
 // POST — Incoming WhatsApp messages
 export async function POST(req: NextRequest) {
-  const body = await req.json();
+  // BUG-12 FIX: Verify webhook signature from Meta
+  const rawBody = await req.text();
+  const appSecret = process.env.WHATSAPP_APP_SECRET || getConfig('whatsapp_app_secret');
+  if (appSecret) {
+    const signature = req.headers.get('x-hub-signature-256');
+    if (!signature) {
+      console.warn('[whatsapp] Missing X-Hub-Signature-256 header');
+      return new Response('Unauthorized', { status: 401 });
+    }
+    const expected = 'sha256=' + createHmac('sha256', appSecret).update(rawBody).digest('hex');
+    if (signature !== expected) {
+      console.warn('[whatsapp] Invalid webhook signature');
+      return new Response('Unauthorized', { status: 401 });
+    }
+  } else {
+    console.warn('[whatsapp] WHATSAPP_APP_SECRET not configured — skipping signature verification (INSECURE)');
+  }
+
+  let body: any;
+  try {
+    body = JSON.parse(rawBody);
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
+  }
 
   // Always return 200 immediately
   const messages = body?.entry?.[0]?.changes?.[0]?.value?.messages;
@@ -40,6 +64,7 @@ export async function POST(req: NextRequest) {
     processChat({
       message: text,
       mode: 'support',
+      locale: 'es',
       context: { phone: from },
     }).then(async (response) => {
       // Send response back via WhatsApp

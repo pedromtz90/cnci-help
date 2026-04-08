@@ -10,17 +10,20 @@ export async function GET() {
   }
   getDb();
   const settings = getPlatformSettings();
+  // BUG-09 FIX: Also mask nexus_password (was leaking in plaintext)
   return NextResponse.json({
     ...settings,
     azure_ad_client_secret: settings.azure_ad_client_secret ? '••••••••' : '',
     smtp_pass: settings.smtp_pass ? '••••••••' : '',
     nexus_api_key: settings.nexus_api_key ? '••••••••' : '',
+    nexus_password: settings.nexus_password ? '••••••••' : '',
     ai_api_key: settings.ai_api_key ? '••••••••' : '',
   });
 }
 
 export async function POST(req: NextRequest) {
-  try { await requireDirector(); } catch (e) {
+  let session;
+  try { session = await requireDirector(); } catch (e) {
     if (e instanceof AuthError) return NextResponse.json({ error: e.message }, { status: e.status });
     return NextResponse.json({ error: 'No autorizado.' }, { status: 401 });
   }
@@ -44,6 +47,7 @@ export async function POST(req: NextRequest) {
       clean[key] = value;
     }
   }
-  savePlatformSettings(clean as any);
+  // BUG-14 FIX: Pass actor email for audit logging
+  savePlatformSettings(clean as any, session.email);
   return NextResponse.json({ ok: true, message: 'Configuración guardada.' });
 }

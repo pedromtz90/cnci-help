@@ -11,6 +11,16 @@ import { recordGap } from '@/lib/knowledge/gaps';
 import { getDb } from '@/lib/db/database';
 import type { Ticket } from '@/types/content';
 
+// BUG-10 FIX: HTML escape helper to prevent XSS in email templates
+export function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 // ── Schemas ─────────────────────────────────────────────────────────
 
 export const CaseInputSchema = z.object({

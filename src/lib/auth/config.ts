@@ -7,7 +7,7 @@ export type UserRole = 'student' | 'staff' | 'director';
 
 export function getUserRole(email: string): UserRole {
   // Ensure DB is initialized before reading settings
-  try { getDb(); } catch {}
+  try { getDb(); } catch (err) { console.error('[auth] DB init failed:', err); }
   const lower = email.toLowerCase();
   if (getDirectorEmails().has(lower)) return 'director';
   if (getStaffEmails().has(lower)) return 'staff';
@@ -17,16 +17,16 @@ export function getUserRole(email: string): UserRole {
 export const authOptions: NextAuthOptions = {
   providers: [
     // Microsoft Azure AD SSO — only active when configured
-    ...(process.env.AZURE_AD_CLIENT_ID || (() => { try { getDb(); return getConfig('azure_ad_client_id'); } catch { return ''; } })()
+    ...(process.env.AZURE_AD_CLIENT_ID || (() => { try { getDb(); return getConfig('azure_ad_client_id'); } catch (err) { console.error('[auth] Failed to read azure_ad_client_id from DB:', err); return ''; } })()
       ? [
           {
             id: 'azure-ad',
             name: 'Microsoft CNCI',
             type: 'oauth' as const,
-            wellKnown: `https://login.microsoftonline.com/${process.env.AZURE_AD_TENANT_ID || (() => { try { return getConfig('azure_ad_tenant_id'); } catch { return 'common'; } })()}/v2.0/.well-known/openid-configuration`,
+            wellKnown: `https://login.microsoftonline.com/${process.env.AZURE_AD_TENANT_ID || (() => { try { return getConfig('azure_ad_tenant_id'); } catch (err) { console.error('[auth] Failed to read azure_ad_tenant_id:', err); return 'common'; } })()}/v2.0/.well-known/openid-configuration`,
             authorization: { params: { scope: 'openid email profile User.Read' } },
-            clientId: process.env.AZURE_AD_CLIENT_ID || (() => { try { return getConfig('azure_ad_client_id'); } catch { return ''; } })(),
-            clientSecret: process.env.AZURE_AD_CLIENT_SECRET || (() => { try { return getConfig('azure_ad_client_secret'); } catch { return ''; } })(),
+            clientId: process.env.AZURE_AD_CLIENT_ID || (() => { try { return getConfig('azure_ad_client_id'); } catch (err) { console.error('[auth] Failed to read azure_ad_client_id:', err); return ''; } })(),
+            clientSecret: process.env.AZURE_AD_CLIENT_SECRET || (() => { try { return getConfig('azure_ad_client_secret'); } catch (err) { console.error('[auth] Failed to read azure_ad_client_secret:', err); return ''; } })(),
             idToken: true,
             profile(profile: any) {
               return {

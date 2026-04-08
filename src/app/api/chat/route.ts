@@ -65,8 +65,8 @@ export async function POST(req: NextRequest) {
           'X-Accel-Buffering': 'no',
         },
       });
-    } catch {
-      // Fallback to non-streaming
+    } catch (err) {
+      console.error('[chat] Streaming proxy failed, falling back to non-streaming:', err);
     }
   }
 
@@ -95,7 +95,9 @@ export async function POST(req: NextRequest) {
       const content = await loadPublishedContent();
       initSearchIndex(content);
       indexedAt = now;
-    } catch {}
+    } catch (err) {
+      console.error('[chat] Local search index rebuild failed:', err);
+    }
   }
 
   const response = await processChat(body);

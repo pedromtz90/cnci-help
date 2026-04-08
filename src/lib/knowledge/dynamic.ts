@@ -207,7 +207,7 @@ export function bulkImport(items: CreateKnowledgeInput[]): { created: number; er
           item.videoUrl || '', item.imageUrl || '',
         );
         created++;
-      } catch { errors++; }
+      } catch (err) { console.error('[dynamic] Failed to insert item:', err); errors++; }
     }
   });
 

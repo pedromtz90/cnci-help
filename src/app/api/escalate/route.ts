@@ -18,7 +18,29 @@ const EscalateSchema = z.object({
   category: z.string().default('soporte'),
 });
 
+// BUG-01 FIX: Add rate limiting to prevent abuse on unauthenticated endpoint
+const escalateRateLimits = new Map<string, { count: number; resetAt: number }>();
+
 export async function POST(req: NextRequest) {
+  // Rate limit: 5 escalations per minute per IP
+  const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown';
+  const now = Date.now();
+  const bucket = escalateRateLimits.get(ip);
+  if (bucket && now < bucket.resetAt) {
+    if (bucket.count >= 5) {
+      return NextResponse.json({ error: 'Demasiadas solicitudes de escalación.' }, { status: 429 });
+    }
+    bucket.count++;
+  } else {
+    escalateRateLimits.set(ip, { count: 1, resetAt: now + 60_000 });
+  }
+  // Periodic cleanup
+  if (escalateRateLimits.size > 5000) {
+    for (const [key, val] of escalateRateLimits) {
+      if (now >= val.resetAt) escalateRateLimits.delete(key);
+    }
+  }
+
   let body: z.infer<typeof EscalateSchema>;
   try {
     body = EscalateSchema.parse(await req.json());

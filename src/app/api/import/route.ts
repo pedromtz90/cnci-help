@@ -59,6 +59,11 @@ export async function POST(req: NextRequest) {
         }
 
         const slug = slugify(question);
+        // BUG-11 FIX: Validate slug is non-empty and safe for filesystem
+        if (!slug || slug.length < 2) {
+          errors.push(`Skipped: could not generate valid slug for "${question.slice(0, 40)}"`);
+          continue;
+        }
         const id = `faq-${slug}`;
 
         // Build MDX file content
@@ -83,6 +88,11 @@ ${formatAnswer(answer)}
 `;
 
         const filePath = path.join(contentDir, `${slug}.mdx`);
+        // BUG-11 FIX: Ensure file stays within contentDir (prevent path traversal)
+        if (!filePath.startsWith(contentDir + path.sep)) {
+          errors.push(`Skipped: path traversal attempt for slug "${slug}"`);
+          continue;
+        }
         fs.writeFileSync(filePath, mdx, 'utf-8');
         created.push(slug);
       } catch (err: any) {

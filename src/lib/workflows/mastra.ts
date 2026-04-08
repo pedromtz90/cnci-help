@@ -16,6 +16,7 @@ import {
   toolValidateInput, toolClassifyCase, toolCreateTicket,
   toolAssignDepartment, toolUpdateCaseStatus, toolSendEmail,
   toolSaveAuditLog, toolEscalateToNexus, toolRecordGap, toolTrackEvent,
+  escapeHtml,
 } from './tools';
 
 // ── Types ───────────────────────────────────────────────────────────
@@ -173,11 +174,11 @@ export async function runStudentServiceWorkflow(rawInput: any): Promise<Workflow
             <h2 style="color:white;margin:0">Tu solicitud ha sido recibida</h2>
           </div>
           <div style="padding:24px;background:#f8fafc;border-radius:0 0 16px 16px">
-            <p>Hola ${input.studentName},</p>
-            <p>Recibimos tu solicitud con folio <strong>${result.ticketFolio}</strong>.</p>
-            <p><strong>Categoría:</strong> ${classification.category}</p>
-            <p><strong>Departamento asignado:</strong> ${classification.department}</p>
-            <p><strong>Resumen:</strong> ${classification.summary}</p>
+            <p>Hola ${escapeHtml(input.studentName)},</p>
+            <p>Recibimos tu solicitud con folio <strong>${escapeHtml(result.ticketFolio!)}</strong>.</p>
+            <p><strong>Categoría:</strong> ${escapeHtml(classification.category)}</p>
+            <p><strong>Departamento asignado:</strong> ${escapeHtml(classification.department)}</p>
+            <p><strong>Resumen:</strong> ${escapeHtml(classification.summary)}</p>
             ${classification.riskOfDropout ? '<p style="color:#dc2626"><strong>Tu caso ha sido marcado como prioritario.</strong> Un asesor te contactará a la brevedad.</p>' : ''}
             <p>Puedes dar seguimiento en <a href="https://cncifaq.com/tickets" style="color:#2563eb">cncifaq.com/tickets</a> con tu folio.</p>
             <p style="color:#94a3b8;font-size:12px;margin-top:24px">Universidad Virtual CNCI — Centro de Ayuda</p>
@@ -258,9 +259,9 @@ export async function runCaseResolutionWorkflow(input: {
             <h2 style="color:white;margin:0">Tu solicitud fue resuelta</h2>
           </div>
           <div style="padding:24px;background:#f8fafc;border-radius:0 0 16px 16px">
-            <p>Hola ${statusResult.data.studentName},</p>
-            <p>Tu solicitud <strong>${statusResult.data.folio}</strong> ha sido resuelta.</p>
-            ${input.resolutionNote ? `<p><strong>Nota:</strong> ${input.resolutionNote}</p>` : ''}
+            <p>Hola ${escapeHtml(statusResult.data.studentName)},</p>
+            <p>Tu solicitud <strong>${escapeHtml(statusResult.data.folio)}</strong> ha sido resuelta.</p>
+            ${input.resolutionNote ? `<p><strong>Nota:</strong> ${escapeHtml(input.resolutionNote)}</p>` : ''}
             <p>¿Te ayudamos bien? Cuéntanos tu experiencia:</p>
             <div style="text-align:center;margin:20px 0">
               <a href="https://cncifaq.com/api/analytics?action=satisfaction&folio=${statusResult.data.folio}&score=5" style="font-size:32px;text-decoration:none;margin:0 8px">😄</a>

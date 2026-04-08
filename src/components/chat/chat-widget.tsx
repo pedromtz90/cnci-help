@@ -91,7 +91,9 @@ export function ChatWidget() {
                   return updated;
                 });
               }
-            } catch {}
+            } catch (err) {
+              console.error('[chat-widget] Failed to parse SSE event:', err);
+            }
           }
         }
 

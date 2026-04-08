@@ -67,11 +67,14 @@ export async function POST(req: NextRequest) {
   });
 
   // Sync to Nexus (non-blocking)
+  // BUG-03 FIX: Add .catch() to prevent unhandled promise rejection
   syncTicketToNexus(ticket).then((result) => {
     if (result.conversationId) {
       const db = getDb();
       db.prepare('UPDATE tickets SET nexus_case_id = ? WHERE id = ?').run(result.conversationId, ticket.id);
     }
+  }).catch((err) => {
+    console.error('[tickets] Nexus sync failed:', err?.message || err);
   });
 
   return NextResponse.json({ ticket }, { status: 201 });
