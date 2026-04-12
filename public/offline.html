@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#1e3a5f" />
+  <title>Sin conexión — Ana CNCI</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      min-height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: #f8fafc;
+      color: #1e293b;
+      padding: 1.5rem;
+      text-align: center;
+    }
+
+    .card {
+      background: #ffffff;
+      border-radius: 1.5rem;
+      border: 1px solid #e2e8f0;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+      padding: 2.5rem 2rem;
+      max-width: 420px;
+      width: 100%;
+    }
+
+    .icon-wrap {
+      width: 72px;
+      height: 72px;
+      border-radius: 1rem;
+      background: #eff6ff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 1.5rem;
+    }
+
+    .icon-wrap svg {
+      width: 36px;
+      height: 36px;
+      color: #1e3a5f;
+    }
+
+    h1 {
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: #1e3a5f;
+      margin-bottom: 0.5rem;
+    }
+
+    p {
+      color: #64748b;
+      line-height: 1.6;
+      font-size: 0.9375rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      background: #1e3a5f;
+      color: #ffffff;
+      font-weight: 600;
+      font-size: 0.9375rem;
+      padding: 0.75rem 1.75rem;
+      border-radius: 0.75rem;
+      border: none;
+      cursor: pointer;
+      text-decoration: none;
+      transition: background 0.2s;
+      width: 100%;
+    }
+
+    .btn:hover { background: #16304f; }
+
+    .logo {
+      margin-bottom: 2rem;
+      opacity: 0.9;
+    }
+
+    .logo img {
+      height: 40px;
+      width: auto;
+    }
+
+    .tips {
+      margin-top: 1.5rem;
+      background: #f8fafc;
+      border-radius: 0.75rem;
+      padding: 1rem;
+      text-align: left;
+    }
+
+    .tips p {
+      font-size: 0.8125rem;
+      color: #94a3b8;
+      margin-bottom: 0;
+      font-weight: 500;
+    }
+
+    .tips ul {
+      margin-top: 0.5rem;
+      padding-left: 1.25rem;
+    }
+
+    .tips li {
+      font-size: 0.8125rem;
+      color: #94a3b8;
+      margin-bottom: 0.25rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo">
+      <img src="/logo-cnci.png" alt="CNCI" onerror="this.style.display='none'" />
+    </div>
+
+    <div class="icon-wrap">
+      <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+        <path stroke-linecap="round" stroke-linejoin="round"
+          d="M3 3l1.664 1.664M21 21l-1.5-1.5m-5.485-1.242L12 17.25 4.5 21V8.742m.164-4.078a2.15 2.15 0 011.743-1.342 48.507 48.507 0 0110.186 0c1.1.128 1.907 1.077 1.907 2.185V19.5M4.664 4.664L19.5 19.5" />
+      </svg>
+    </div>
+
+    <h1>Sin conexión</h1>
+    <p>
+      Ana no está disponible en este momento porque no hay conexión a internet.
+      Por favor verifica tu conexión e intenta de nuevo.
+    </p>
+
+    <button class="btn" onclick="window.location.reload()">
+      <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
+      </svg>
+      Intentar de nuevo
+    </button>
+
+    <div class="tips">
+      <p>Mientras tanto puedes:</p>
+      <ul>
+        <li>Verificar tu conexión Wi-Fi o datos móviles</li>
+        <li>Consultar páginas que ya abriste anteriormente</li>
+        <li>Contactar al soporte en servicios@cncivirtual.mx</li>
+      </ul>
+    </div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" width="192" height="192">
+  <rect width="192" height="192" rx="32" fill="#1e3a5f"/>
+  <!-- Graduation cap top -->
+  <polygon points="96,44 152,72 96,100 40,72" fill="#ffffff" opacity="0.95"/>
+  <!-- Cap brim shadow -->
+  <polygon points="96,56 152,72 96,88 40,72" fill="#ffffff" opacity="0.15"/>
+  <!-- Cap string/tassel drop -->
+  <rect x="148" y="72" width="5" height="30" rx="2.5" fill="#f0b429"/>
+  <circle cx="150.5" cy="104" r="5" fill="#f0b429"/>
+  <!-- Left pillar of mortarboard -->
+  <rect x="70" y="96" width="8" height="36" rx="4" fill="#ffffff" opacity="0.85"/>
+  <!-- Right pillar -->
+  <rect x="114" y="96" width="8" height="36" rx="4" fill="#ffffff" opacity="0.85"/>
+  <!-- Base (stage) -->
+  <rect x="62" y="128" width="68" height="8" rx="4" fill="#ffffff" opacity="0.85"/>
+  <!-- AI sparkle dots -->
+  <circle cx="96" cy="152" r="4" fill="#60a5fa"/>
+  <circle cx="80" cy="158" r="3" fill="#60a5fa" opacity="0.7"/>
+  <circle cx="112" cy="158" r="3" fill="#60a5fa" opacity="0.7"/>
+</svg>
